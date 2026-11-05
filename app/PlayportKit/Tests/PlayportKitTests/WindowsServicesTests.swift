@@ -50,8 +50,11 @@ final class WindowsServicesTests: XCTestCase {
         every["env.FEX_HOSTFEATURES"] = "enableafp"
         XCTAssertEqual(effective.config(over: [:]), every)
         XCTAssertEqual(LaunchSettings.releaseRuntime(compat: nil), [:])
-        XCTAssertEqual(LaunchSettings.releaseSteamAPI(compat: nil), .client)
-        XCTAssertEqual(LaunchSettings.releaseSteamAPI(compat: LaunchSettings(steamAPI: .emulated)), .emulated)
+        XCTAssertEqual(LaunchSettings.releaseSteamAPI(own: nil, compat: nil), .client)
+        XCTAssertEqual(LaunchSettings.releaseSteamAPI(own: nil, compat: LaunchSettings(steamAPI: .emulated)), .emulated)
+        // The player's choice on the game's page wins over both (decision 0179).
+        XCTAssertEqual(LaunchSettings.releaseSteamAPI(own: .emulated, compat: nil), .emulated)
+        XCTAssertEqual(LaunchSettings.releaseSteamAPI(own: .client, compat: LaunchSettings(steamAPI: .emulated)), .client)
     }
 
     func testRpcSsEntryIsWineInfsAndOnlyTopsUp() throws {

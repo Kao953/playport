@@ -988,6 +988,7 @@ private struct GameDetailPage: View {
                     library.askCloud(t, app, c.conflicts, thenPlay: false)
                 }
             }
+            steamAPIRow(t)
         }
         if t.store != .steam, t.source != .cohort { localRows(t) }
         filesRows(t)
@@ -998,6 +999,45 @@ private struct GameDetailPage: View {
         PadRow(id: "opt:report", title: "Report a problem", value: "Shares a zip of the logs", accessory: .chevron, style: .plain,
                hint: "Share") { ProblemReport.share(t) }
         uninstallRow(t)
+    }
+
+    /// The steam_api the game talks to (decisions 0115, 0153), in both builds: a game whose saves
+    /// go through the Steam API may need the emulator until Playport's Steam client serves them.
+    @ViewBuilder
+    private func steamAPIRow(_ t: InstalledTitle) -> some View {
+        let settings = launchSettings.binding(for: t.id)
+        let compat = launchSettings.compat(for: t.id)?.settings
+        let every = LaunchSettings.everyGame
+        // Playport's Steam client (decision 0115) may be the game's compatibility default.
+        let steamAPI = OptionValue.of(own: settings.wrappedValue.steamAPI, compat: compat?.steamAPI, inherited: every.steamAPI ?? .emulated,
+                                      name: Self.steamAPIModeText)
+        PadRow(id: "opt:steamAPI", title: "Steam API", value: steamAPI.text, accessory: .chevron,
+               changed: steamAPI.changed, style: .plain,
+               reset: steamAPI.changed ? { settings.wrappedValue.steamAPI = nil } : nil) {
+            PadModal.shared.picker(
+                title: "Steam API", context: "\(context) · Steam",
+                note: "If the game can't save or load, try Playport's emulator. "
+                    + "The game's own Steam API needs Steam running: with Playport's Steam client it finds one that "
+                    + "answers for this game only; alone, games that check for Steam will not start. "
+                    + "Changes apply from the game's next launch.",
+                options: [PadOption(id: "", label: "Default",
+                                    detail: compat?.steamAPI.map { "\(Self.steamAPIModeText($0)), for this game" }
+                                        ?? Self.steamAPIModeText(every.steamAPI ?? .emulated)),
+                          PadOption(id: SteamAPISwap.Mode.emulated.rawValue, label: Self.steamAPIModeText(.emulated)),
+                          PadOption(id: SteamAPISwap.Mode.client.rawValue, label: Self.steamAPIModeText(.client)),
+                          PadOption(id: SteamAPISwap.Mode.original.rawValue, label: Self.steamAPIModeText(.original))],
+                selected: settings.wrappedValue.steamAPI?.rawValue ?? "") {
+                settings.wrappedValue.steamAPI = SteamAPISwap.Mode(rawValue: $0)
+            }
+        }
+    }
+
+    private static func steamAPIModeText(_ m: SteamAPISwap.Mode) -> String {
+        switch m {
+        case .emulated: "Playport's emulator"
+        case .client: "Playport's Steam client"
+        case .original: "The game's own"
+        }
     }
 
     /// A game that came without a store's launch record (imported, found, or another
@@ -1255,27 +1295,6 @@ private struct GameDetailPage: View {
                                      maxLength: 300) { settings.wrappedValue.graphicsOptions = $0 }
         }
         if let app = t.appID {
-            // Playport's Steam client (decision 0115) may be the game's compatibility default.
-            let steamAPI = OptionValue.of(own: settings.wrappedValue.steamAPI, compat: compat?.steamAPI, inherited: every.steamAPI ?? .emulated,
-                                          name: Self.steamAPIModeText)
-            PadRow(id: "opt:steamAPI", title: "Steam API", value: steamAPI.text, accessory: .chevron,
-                   changed: steamAPI.changed, style: .plain,
-                   reset: steamAPI.changed ? { settings.wrappedValue.steamAPI = nil } : nil) {
-                PadModal.shared.picker(
-                    title: "Steam API", context: "\(context) · Steam",
-                    note: "The game's own Steam API needs Steam running: with Playport's Steam client it finds one that "
-                        + "answers for this game only; alone, games that check for Steam will not start. "
-                        + "Changes apply from the game's next launch.",
-                    options: [PadOption(id: "", label: "Default",
-                                        detail: compat?.steamAPI.map { "\(Self.steamAPIModeText($0)), for this game" }
-                                            ?? Self.steamAPIModeText(every.steamAPI ?? .emulated)),
-                              PadOption(id: SteamAPISwap.Mode.emulated.rawValue, label: Self.steamAPIModeText(.emulated)),
-                              PadOption(id: SteamAPISwap.Mode.client.rawValue, label: Self.steamAPIModeText(.client)),
-                              PadOption(id: SteamAPISwap.Mode.original.rawValue, label: Self.steamAPIModeText(.original))],
-                    selected: settings.wrappedValue.steamAPI?.rawValue ?? "") {
-                    settings.wrappedValue.steamAPI = SteamAPISwap.Mode(rawValue: $0)
-                }
-            }
             developerFacts(t, app)
             PadRow(id: "opt:cloud-forget", title: "Forget the cloud sync",
                    subtitle: "The next sync is a first one: a save that differs from Steam's is a conflict",
@@ -1327,14 +1346,6 @@ private struct GameDetailPage: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
-    }
-
-    private static func steamAPIModeText(_ m: SteamAPISwap.Mode) -> String {
-        switch m {
-        case .emulated: "Playport's emulator"
-        case .client: "Playport's Steam client"
-        case .original: "The game's own"
-        }
     }
 
     private static func steamStubText(_ site: SteamStub.Site, mode: SteamAPISwap.Mode) -> String {

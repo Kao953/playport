@@ -300,15 +300,16 @@ final class LibraryModel: ObservableObject {
         // The player's settings over 720p, 60 fps, Vulkan and every game's defaults (decision 0153).
         #if PLAYPORT_RELEASE
         var settings = LaunchSettingsStore.shared.effective(for: t)
-        // Memory ordering, block size, x87 precision, the disk cache, the Steam API choice and runtime keys are a dev build's
+        // Memory ordering, block size, x87 precision, the disk cache and runtime keys are a dev build's
         // (decision 0034): the player's app runs the game's profile and the defaults, whatever a dev build left stored.
         settings.ordering = MemoryOrdering()
         settings.maxInst = nil
         settings.x87Reduced = nil
         settings.diskCache = nil
-        // Playport's Steam client unless the game's compatibility default says otherwise (decisions 0115, 0153).
+        // The player's Steam API choice, else Playport's Steam client unless the game's compatibility default
+        // says otherwise (decisions 0115, 0153, 0179).
         let compat = LaunchSettingsStore.shared.compat(for: t.id)?.settings
-        settings.steamAPI = LaunchSettings.releaseSteamAPI(compat: compat)
+        settings.steamAPI = LaunchSettings.releaseSteamAPI(own: LaunchSettingsStore.shared.settings(for: t.id).steamAPI, compat: compat)
         // The compatibility default's runtime keys, never a person's (decision 0126); every game's go under
         // them in config(over:) (decision 0153).
         settings.runtime = LaunchSettings.releaseRuntime(compat: compat)

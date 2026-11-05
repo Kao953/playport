@@ -718,8 +718,9 @@ the Vulkan backend with `-d3d12` (arm64ec vkd3d-proton), whatever the graphics s
   cannot draw.
   Game options show the same inherited backend as Play. Native and no limit are a player's choice. FEX's memory
   ordering comes from a dev build's Game options over the game's profile (the
-  release app runs the profile, and every game's default Steam API mode,
-  Playport's Steam client: [decision 0153](decisions/0153-rdr2s-settings-are-every-games-defaults.md)), Proton's FEX
+  release app runs the profile; its Steam API mode is the player's choice on the game's page, else
+  every game's default, Playport's Steam client: [decision 0153](decisions/0153-rdr2s-settings-are-every-games-defaults.md),
+  [0179](decisions/0179-the-steam-api-choice-in-release.md)), Proton's FEX
   settings for its Steam app ID and executable (PlayportKit `FEXProfile`,
   [decision 0021](decisions/0021-fex-ordering-per-game.md)), as `FEX_*`
   environment variables, with the host CPU features FEX cannot read on iOS

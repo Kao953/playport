@@ -186,10 +186,10 @@ public struct LaunchSettings: Codable, Equatable, Sendable {
         runtimeKeys(compat?.runtime ?? "") ?? [:]
     }
 
-    /// The Steam API a release build launches a Steam app with (decisions 0115, 0153): the game's
-    /// compatibility default's, else everyGame's, never a person's.
-    public static func releaseSteamAPI(compat: LaunchSettings?) -> SteamAPISwap.Mode {
-        overEveryGame(compat).steamAPI ?? .emulated
+    /// The Steam API a release build launches a Steam app with (decisions 0115, 0153, 0179): the
+    /// player's choice on the game's page, else the game's compatibility default's, else everyGame's.
+    public static func releaseSteamAPI(own: SteamAPISwap.Mode?, compat: LaunchSettings?) -> SteamAPISwap.Mode {
+        own ?? overEveryGame(compat).steamAPI ?? .emulated
     }
 
     /// Runtime keys as typed (`vram-mb=1024 inproc-sync=1`): `key=value` items at spaces,

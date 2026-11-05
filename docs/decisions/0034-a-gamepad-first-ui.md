@@ -5,7 +5,8 @@
 [plan](https://linear.app/playportdev/issue/PLA-679). [0012](0012-the-ui-is-the-only-entry-point.md)
 holds: everything stays in the UI. Amended by
 [0171](0171-on-screen-controls-input-mapping-and-gyro.md): a three-finger tap on the game opens
-the in-game menu too.
+the in-game menu too. Amended by [0179](0179-the-steam-api-choice-in-release.md): the Steam API choice
+is in the release app too.
 
 ## Decision
 
