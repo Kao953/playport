@@ -149,7 +149,7 @@ typedef struct { int32_t user; int32_t callback; uint8_t *param; int32_t size; }
 
 #define MAX_PENDING 16
 static struct ticket { uint32_t handle; int web; uint32_t size; uint8_t bytes[PP_SC_DATA_MAX]; } tickets[MAX_PENDING];
-static struct result { uint64_t call; int32_t callback; uint32_t size; int32_t eresult; int done; } results[MAX_PENDING];
+static struct result { uint64_t call; int32_t callback; uint32_t size; uint8_t data[32]; int done; } results[MAX_PENDING];
 static uint64_t next_call = 1;
 static uint8_t app_ticket[PP_SC_DATA_MAX];
 static uint32_t app_ticket_size;
@@ -158,19 +158,29 @@ static uint8_t current[16 + PP_SC_DATA_MAX];
 static int holding;
 static int32_t pipes;
 
-/* An at-once call result: SteamAPICallCompleted_t first, then its bytes. */
-static uint64_t result_now(int32_t callback, int32_t eresult)
+/* An at-once call result: SteamAPICallCompleted_t first, then its bytes (up to 32). The call
+ * handle is known before the bytes, which may name it: `fill` writes them given the handle. */
+static uint64_t result_with(int32_t callback, uint32_t size, void (*fill)(uint64_t call, uint8_t *data, void *ctx), void *ctx)
 {
     for (int i = 0; i < MAX_PENDING; i++)
         if (!results[i].call) {
             results[i].call = next_call++;
             results[i].callback = callback;
-            results[i].eresult = eresult;
-            results[i].size = 4;
+            results[i].size = size <= sizeof(results[i].data) ? size : sizeof(results[i].data);
+            memset(results[i].data, 0, sizeof(results[i].data));
+            if (fill) fill(results[i].call, results[i].data, ctx);
             results[i].done = 0;
             return results[i].call;
         }
     return 0;   /* k_uAPICallInvalid */
+}
+
+static void fill_eresult(uint64_t call, uint8_t *data, void *ctx) { (void)call; memcpy(data, ctx, 4); }
+
+/* A result that is only its EResult. */
+static uint64_t result_now(int32_t callback, int32_t eresult)
+{
+    return result_with(callback, 4, fill_eresult, &eresult);
 }
 
 static int next_callback(callback_msg *msg)
@@ -229,7 +239,7 @@ static int take_result(uint64_t call, void *buf, int size, int expected, uint8_t
             if (failed) *failed = 1;
             return 0;
         }
-        memcpy(buf, &results[i].eresult, 4);
+        memcpy(buf, results[i].data, results[i].size);
         if (failed) *failed = 0;
         results[i].call = 0;
         return 1;
@@ -892,6 +902,379 @@ static const char *friends_GetFriendPersonaName(iface *self, uint64_t steam_id)
 }
 
 /* What a method name answers with, in any version that has it. */
+/* ISteamRemoteStorage (decision 0192): the game's own Steam Cloud files, which it writes
+ * through the API rather than to a folder of its own. They live where the emulator keeps
+ * them, %APPDATA%\GSE Saves\<appid>\remote\, the folder Playport's cloud sync uploads and
+ * downloads as Steam's root-less files (SteamClientKit Cloud.Roots.remote): a game keeps its
+ * saves across Steam API modes and the phone and PC share them. A name is UTF-8 with '/' or
+ * '\' between folders; one that is absolute, empty or has a ".." part is refused. */
+
+#define CB_FILE_WRITE_ASYNC 1331     /* RemoteStorageFileWriteAsyncComplete_t */
+#define CB_FILE_READ_ASYNC 1332      /* RemoteStorageFileReadAsyncComplete_t */
+#define RS_PATH 640
+#define RS_QUOTA 1000000000ull       /* what the quota calls report as the total */
+
+/* The folder, with a trailing backslash; 0 when APPDATA or the app is unknown. */
+static int rs_root(WCHAR *out, int cap)
+{
+    char id[24];
+    int n = (int)GetEnvironmentVariableW(L"APPDATA", out, (DWORD)cap);
+    const char *a;
+    if (n <= 0 || n > cap - 64 || !app_id()) return 0;
+    for (const WCHAR *t = L"\\GSE Saves\\"; *t; t++) out[n++] = *t;
+    for (a = num(id, app_id()); *a; a++) out[n++] = (WCHAR)*a;
+    for (const WCHAR *t = L"\\remote\\"; *t; t++) out[n++] = *t;
+    out[n] = 0;
+    return n;
+}
+
+/* The file's full path; 0 for a refused name. */
+static int rs_path(const char *name, WCHAR *out, int cap)
+{
+    int n = rs_root(out, cap), m, start;
+    if (!n || !name || !*name || name[0] == '/' || name[0] == '\\' || (name[0] && name[1] == ':')) return 0;
+    m = MultiByteToWideChar(CP_UTF8, 0, name, -1, out + n, cap - n);
+    if (m <= 1) return 0;
+    start = n;
+    for (int i = n; out[i]; i++) if (out[i] == '/') out[i] = '\\';
+    for (int i = start; out[i]; i++) {
+        int b = i == start || out[i - 1] == '\\';
+        if (b && out[i] == '.' && out[i + 1] == '.' && (out[i + 2] == '\\' || !out[i + 2])) return 0;
+    }
+    return n + m - 1;
+}
+
+/* Makes every folder above the file. */
+static void rs_folders(WCHAR *path)
+{
+    for (WCHAR *p = path + 3; *p; p++)
+        if (*p == '\\') { *p = 0; CreateDirectoryW(path, NULL); *p = '\\'; }
+}
+
+static int rs_attributes(const char *name, WIN32_FILE_ATTRIBUTE_DATA *a)
+{
+    WCHAR path[RS_PATH];
+    if (!rs_path(name, path, RS_PATH)) return 0;
+    return GetFileAttributesExW(path, GetFileExInfoStandard, a) && !(a->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+/* Writes the whole file through a temporary beside it, so a failed write keeps the old one. */
+static int rs_write(const char *name, const void *data, uint32_t size)
+{
+    WCHAR path[RS_PATH], tmp[RS_PATH + 8];
+    int n = rs_path(name, path, RS_PATH), ok;
+    HANDLE h;
+    DWORD done = 0;
+    if (!n || (size && !data)) return 0;
+    rs_folders(path);
+    memcpy(tmp, path, (size_t)n * sizeof(WCHAR));
+    for (const WCHAR *t = L".pptmp"; *t; t++) tmp[n++] = *t;
+    tmp[n] = 0;
+    h = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    ok = !size || (WriteFile(h, data, size, &done, NULL) && done == size);
+    CloseHandle(h);
+    if (ok) ok = MoveFileExW(tmp, path, MOVEFILE_REPLACE_EXISTING);
+    if (!ok) DeleteFileW(tmp);
+    return ok;
+}
+
+/* Reads up to `size` bytes from `offset`; the count, or -1 for a missing file. */
+static int32_t rs_read(const char *name, uint32_t offset, void *buf, uint32_t size)
+{
+    WCHAR path[RS_PATH];
+    HANDLE h;
+    DWORD done = 0;
+    LARGE_INTEGER at;
+    if (!rs_path(name, path, RS_PATH)) return -1;
+    h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    at.QuadPart = offset;
+    if (!SetFilePointerEx(h, at, NULL, FILE_BEGIN) || (size && !ReadFile(h, buf, size, &done, NULL))) done = 0;
+    CloseHandle(h);
+    return (int32_t)done;
+}
+
+static uint8_t rs_FileWrite(iface *self, const char *name, const void *data, int32_t size)
+{
+    uint8_t ok;
+    (void)self;
+    if (size < 0) return 0;
+    ok = (uint8_t)rs_write(name, data, (uint32_t)size);
+    say("remote storage: write ", name ? name : "(null)", ok ? "" : " failed", NULL, NULL, NULL);
+    return ok;
+}
+static int32_t rs_FileRead(iface *self, const char *name, void *data, int32_t size)
+{
+    int32_t n;
+    (void)self;
+    if (size < 0 || (size && !data)) return 0;
+    n = rs_read(name, 0, data, (uint32_t)size);
+    return n < 0 ? 0 : n;
+}
+static uint8_t rs_FileExists(iface *self, const char *name)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    (void)self;
+    return (uint8_t)rs_attributes(name, &a);
+}
+static int32_t rs_GetFileSize(iface *self, const char *name)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    (void)self;
+    return rs_attributes(name, &a) ? (int32_t)a.nFileSizeLow : 0;
+}
+static int64_t rs_GetFileTimestamp(iface *self, const char *name)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    uint64_t t;
+    (void)self;
+    if (!rs_attributes(name, &a)) return 0;
+    t = (uint64_t)a.ftLastWriteTime.dwHighDateTime << 32 | a.ftLastWriteTime.dwLowDateTime;
+    return t > 116444736000000000ull ? (int64_t)((t - 116444736000000000ull) / 10000000ull) : 0;
+}
+static uint8_t rs_FileDelete(iface *self, const char *name)
+{
+    WCHAR path[RS_PATH];
+    (void)self;
+    return rs_path(name, path, RS_PATH) && DeleteFileW(path);
+}
+/* Forgetting keeps the file here and only stops Steam syncing it; the sync does that by its rules. */
+static uint8_t rs_FileForget(iface *self, const char *name) { return rs_FileExists(self, name); }
+static uint32_t rs_GetSyncPlatforms(iface *self, const char *name) { (void)self; (void)name; return 0xffffffffu; }
+static uint8_t rs_SetSyncPlatforms(iface *self, const char *name, int32_t platforms)
+{
+    (void)platforms;
+    return rs_FileExists(self, name);
+}
+
+/* The listing GetFileCount takes and GetFileNameAndSize reads, names in UTF-8 with '/'. */
+#define RS_LIST 512
+static char rs_names[RS_LIST][260];
+static int32_t rs_sizes[RS_LIST];
+static int32_t rs_count;
+static uint64_t rs_used;
+
+static void rs_scan(WCHAR *dir, int len, const WCHAR *root, int root_len)
+{
+    WIN32_FIND_DATAW f;
+    HANDLE h;
+    if (len > RS_PATH - 300) return;
+    dir[len] = '*'; dir[len + 1] = 0;
+    h = FindFirstFileW(dir, &f);
+    dir[len] = 0;
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        int n = 0;
+        if (f.cFileName[0] == '.' && (!f.cFileName[1] || (f.cFileName[1] == '.' && !f.cFileName[2]))) continue;
+        while (f.cFileName[n]) n++;
+        if (len + n + 2 >= RS_PATH) continue;
+        memcpy(dir + len, f.cFileName, (size_t)(n + 1) * sizeof(WCHAR));
+        if (f.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            dir[len + n] = '\\';
+            rs_scan(dir, len + n + 1, root, root_len);
+        } else if (rs_count < RS_LIST && !(n > 6 && dir[len + n - 6] == '.' && dir[len + n - 5] == 'p'
+                                          && dir[len + n - 4] == 'p' && dir[len + n - 3] == 't')) {
+            char *out = rs_names[rs_count];
+            int m = WideCharToMultiByte(CP_UTF8, 0, dir + root_len, -1, out, sizeof(rs_names[0]), NULL, NULL);
+            if (m > 1) {
+                for (char *c = out; *c; c++) if (*c == '\\') *c = '/';
+                rs_sizes[rs_count++] = (int32_t)f.nFileSizeLow;
+                rs_used += f.nFileSizeLow;
+            }
+        }
+        dir[len] = 0;
+    } while (FindNextFileW(h, &f));
+    FindClose(h);
+}
+
+static void rs_list(void)
+{
+    WCHAR dir[RS_PATH];
+    int n = rs_root(dir, RS_PATH);
+    rs_count = 0;
+    rs_used = 0;
+    if (n) rs_scan(dir, n, dir, n);
+}
+
+static int32_t rs_GetFileCount(iface *self)
+{
+    int32_t n;
+    (void)self;
+    AcquireSRWLockExclusive(&lock);
+    rs_list();
+    n = rs_count;
+    ReleaseSRWLockExclusive(&lock);
+    return n;
+}
+static const char *rs_GetFileNameAndSize(iface *self, int32_t i, int32_t *size)
+{
+    const char *name = "";
+    (void)self;
+    AcquireSRWLockExclusive(&lock);
+    if (i >= 0 && i < rs_count) {
+        name = rs_names[i];
+        if (size) *size = rs_sizes[i];
+    } else if (size) *size = 0;
+    ReleaseSRWLockExclusive(&lock);
+    return name;
+}
+
+/* The interface's version: the digits after its class name, the newest (016) when none. */
+static int rs_version(iface *self)
+{
+    int v = 0;
+    const char *n = self->name + slen("ISteamRemoteStorage");
+    if (!*n) return 16;
+    for (; *n >= '0' && *n <= '9'; n++) v = v * 10 + (*n - '0');
+    return v;
+}
+/* Up to 013 the quota is two int32; from 014 two uint64. */
+static uint8_t rs_GetQuota(iface *self, void *total, void *available)
+{
+    uint64_t free;
+    AcquireSRWLockExclusive(&lock);
+    rs_list();
+    free = rs_used < RS_QUOTA ? RS_QUOTA - rs_used : 0;
+    ReleaseSRWLockExclusive(&lock);
+    if (rs_version(self) >= 14) {
+        if (total) *(uint64_t *)total = RS_QUOTA;
+        if (available) *(uint64_t *)available = free;
+    } else {
+        if (total) *(int32_t *)total = (int32_t)RS_QUOTA;
+        if (available) *(int32_t *)available = (int32_t)free;
+    }
+    return 1;
+}
+
+static uint64_t rs_FileWriteAsync(iface *self, const char *name, const void *data, uint32_t size)
+{
+    int32_t eresult = rs_FileWrite(self, name, data, (int32_t)size) ? ER_OK : ER_FAIL;
+    uint64_t call;
+    AcquireSRWLockExclusive(&lock);
+    call = result_now(CB_FILE_WRITE_ASYNC, eresult);
+    ReleaseSRWLockExclusive(&lock);
+    return call;
+}
+
+/* An async read is done at once; its bytes wait for FileReadAsyncComplete. */
+#define RS_READS 4
+static struct rs_read { uint64_t call; uint32_t size; uint8_t *bytes; } rs_reads[RS_READS];
+struct rs_read_result { int32_t eresult; uint32_t offset, read; };
+static void fill_read(uint64_t call, uint8_t *data, void *ctx)
+{
+    const struct rs_read_result *r = ctx;
+    memcpy(data, &call, 8);       /* m_hFileReadAsync */
+    memcpy(data + 8, &r->eresult, 4);
+    memcpy(data + 12, &r->offset, 4);
+    memcpy(data + 16, &r->read, 4);
+}
+static uint64_t rs_FileReadAsync(iface *self, const char *name, uint32_t offset, uint32_t size)
+{
+    struct rs_read_result r = { ER_FAIL, offset, 0 };
+    uint8_t *bytes = size ? HeapAlloc(GetProcessHeap(), 0, size) : NULL;
+    int32_t n = (bytes || !size) ? rs_read(name, offset, bytes, size) : -1;
+    uint64_t call;
+    int slot = -1;
+    (void)self;
+    if (n >= 0) { r.eresult = ER_OK; r.read = (uint32_t)n; }
+    AcquireSRWLockExclusive(&lock);
+    for (int i = 0; i < RS_READS && slot < 0; i++) if (!rs_reads[i].call) slot = i;
+    if (slot < 0) { slot = 0; if (rs_reads[0].bytes) HeapFree(GetProcessHeap(), 0, rs_reads[0].bytes); }
+    call = result_with(CB_FILE_READ_ASYNC, 24, fill_read, &r);   /* 8-byte packed on both: 24 bytes */
+    rs_reads[slot].call = call;
+    rs_reads[slot].size = r.read;
+    rs_reads[slot].bytes = bytes;
+    ReleaseSRWLockExclusive(&lock);
+    return call;
+}
+static uint8_t rs_FileReadAsyncComplete(iface *self, uint64_t call, void *buf, uint32_t size)
+{
+    uint8_t ok = 0;
+    (void)self;
+    AcquireSRWLockExclusive(&lock);
+    for (int i = 0; i < RS_READS; i++) {
+        if (!call || rs_reads[i].call != call) continue;
+        if (buf && size >= rs_reads[i].size) {
+            if (rs_reads[i].size) memcpy(buf, rs_reads[i].bytes, rs_reads[i].size);
+            ok = 1;
+        }
+        if (rs_reads[i].bytes) HeapFree(GetProcessHeap(), 0, rs_reads[i].bytes);
+        rs_reads[i].call = 0;
+        rs_reads[i].bytes = NULL;
+    }
+    ReleaseSRWLockExclusive(&lock);
+    return ok;
+}
+
+/* Write streams: the chunks gather in memory and land as one write at Close. */
+#define RS_STREAMS 4
+static struct rs_stream { uint64_t handle; char name[260]; uint8_t *bytes; uint32_t size, cap; } rs_streams[RS_STREAMS];
+static uint64_t rs_next_stream = 1;
+static uint64_t rs_FileWriteStreamOpen(iface *self, const char *name)
+{
+    uint64_t handle = 0xffffffffffffffffull;   /* k_UGCFileStreamHandleInvalid */
+    WCHAR path[RS_PATH];
+    (void)self;
+    if (!name || slen(name) >= sizeof(rs_streams[0].name) || !rs_path(name, path, RS_PATH)) return handle;
+    AcquireSRWLockExclusive(&lock);
+    for (int i = 0; i < RS_STREAMS; i++)
+        if (!rs_streams[i].handle) {
+            rs_streams[i].handle = handle = rs_next_stream++;
+            memcpy(rs_streams[i].name, name, slen(name) + 1);
+            rs_streams[i].bytes = NULL;
+            rs_streams[i].size = rs_streams[i].cap = 0;
+            break;
+        }
+    ReleaseSRWLockExclusive(&lock);
+    return handle;
+}
+static struct rs_stream *rs_stream_of(uint64_t handle)
+{
+    for (int i = 0; i < RS_STREAMS; i++) if (handle && rs_streams[i].handle == handle) return &rs_streams[i];
+    return NULL;
+}
+static uint8_t rs_FileWriteStreamWriteChunk(iface *self, uint64_t handle, const void *data, int32_t size)
+{
+    struct rs_stream *s;
+    uint8_t ok = 0;
+    (void)self;
+    if (size < 0 || (size && !data)) return 0;
+    AcquireSRWLockExclusive(&lock);
+    if ((s = rs_stream_of(handle))) {
+        uint32_t need = s->size + (uint32_t)size;
+        if (need > s->cap) {
+            uint32_t cap = need < 65536 ? 65536 : need * 2;
+            uint8_t *b = s->bytes ? HeapReAlloc(GetProcessHeap(), 0, s->bytes, cap) : HeapAlloc(GetProcessHeap(), 0, cap);
+            if (b) { s->bytes = b; s->cap = cap; }
+        }
+        if (need <= s->cap) {
+            if (size) memcpy(s->bytes + s->size, data, (size_t)size);
+            s->size = need;
+            ok = 1;
+        }
+    }
+    ReleaseSRWLockExclusive(&lock);
+    return ok;
+}
+static uint8_t rs_stream_end(uint64_t handle, int write)
+{
+    struct rs_stream s = { 0 }, *found;
+    uint8_t ok = 0;
+    AcquireSRWLockExclusive(&lock);
+    if ((found = rs_stream_of(handle))) { s = *found; found->handle = 0; found->bytes = NULL; }
+    ReleaseSRWLockExclusive(&lock);
+    if (!s.handle) return 0;
+    if (write) {
+        ok = (uint8_t)rs_write(s.name, s.bytes, s.size);
+        say("remote storage: write ", s.name, ok ? " (stream)" : " (stream) failed", NULL, NULL, NULL);
+    } else ok = 1;
+    if (s.bytes) HeapFree(GetProcessHeap(), 0, s.bytes);
+    return ok;
+}
+static uint8_t rs_FileWriteStreamClose(iface *self, uint64_t handle) { (void)self; return rs_stream_end(handle, 1); }
+static uint8_t rs_FileWriteStreamCancel(iface *self, uint64_t handle) { (void)self; return rs_stream_end(handle, 0); }
+
 static const struct { const char *family, *method; void *fn; } served[] = {
     { "ISteamClient", "CreateSteamPipe", (void *)client_CreateSteamPipe },
     { "ISteamClient", "BReleaseSteamPipe", (void *)client_BReleaseSteamPipe },
@@ -958,6 +1341,32 @@ static const struct { const char *family, *method; void *fn; } served[] = {
     { "ISteamFriends", "GetPersonaState", (void *)friends_GetPersonaState },
     { "ISteamFriends", "GetFriendCount", (void *)client_false },
     { "ISteamFriends", "GetFriendPersonaName", (void *)friends_GetFriendPersonaName },
+    /* The game's own cloud files (decision 0192). */
+    { "ISteamRemoteStorage", "FileWrite", (void *)rs_FileWrite },
+    { "ISteamRemoteStorage", "FileRead", (void *)rs_FileRead },
+    { "ISteamRemoteStorage", "FileWriteAsync", (void *)rs_FileWriteAsync },
+    { "ISteamRemoteStorage", "FileReadAsync", (void *)rs_FileReadAsync },
+    { "ISteamRemoteStorage", "FileReadAsyncComplete", (void *)rs_FileReadAsyncComplete },
+    { "ISteamRemoteStorage", "FileForget", (void *)rs_FileForget },
+    { "ISteamRemoteStorage", "FileDelete", (void *)rs_FileDelete },
+    { "ISteamRemoteStorage", "SetSyncPlatforms", (void *)rs_SetSyncPlatforms },
+    { "ISteamRemoteStorage", "FileWriteStreamOpen", (void *)rs_FileWriteStreamOpen },
+    { "ISteamRemoteStorage", "FileWriteStreamWriteChunk", (void *)rs_FileWriteStreamWriteChunk },
+    { "ISteamRemoteStorage", "FileWriteStreamClose", (void *)rs_FileWriteStreamClose },
+    { "ISteamRemoteStorage", "FileWriteStreamCancel", (void *)rs_FileWriteStreamCancel },
+    { "ISteamRemoteStorage", "FileExists", (void *)rs_FileExists },
+    { "ISteamRemoteStorage", "FilePersisted", (void *)rs_FileExists },
+    { "ISteamRemoteStorage", "GetFileSize", (void *)rs_GetFileSize },
+    { "ISteamRemoteStorage", "GetFileTimestamp", (void *)rs_GetFileTimestamp },
+    { "ISteamRemoteStorage", "GetSyncPlatforms", (void *)rs_GetSyncPlatforms },
+    { "ISteamRemoteStorage", "GetFileCount", (void *)rs_GetFileCount },
+    { "ISteamRemoteStorage", "GetFileNameAndSize", (void *)rs_GetFileNameAndSize },
+    { "ISteamRemoteStorage", "GetQuota", (void *)rs_GetQuota },
+    { "ISteamRemoteStorage", "IsCloudEnabledForAccount", (void *)client_true },
+    { "ISteamRemoteStorage", "IsCloudEnabledForApp", (void *)client_true },
+    { "ISteamRemoteStorage", "SetCloudEnabledForApp", (void *)client_quiet },
+    { "ISteamRemoteStorage", "BeginFileWriteBatch", (void *)client_true },
+    { "ISteamRemoteStorage", "EndFileWriteBatch", (void *)client_true },
     /* Steam Input with no controller: Init succeeds (a game such as CHRONO TRIGGER quits on
      * "SteamController()->Init failed"), every query answers none, and the game reads its pads
      * through XInput (decision 0183). */

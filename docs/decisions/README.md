@@ -190,3 +190,4 @@ supersedes it.
 | [0189](0189-i386-media-decoding.md) | i386 games get winegstreamer's WoW64 call table, whose thunks put guest pointers through the WoW64 window (patches/wine-unix 0208, madeira-unix 0289, gstreamer.sh exports the table) |
 | [0190](0190-my-documents-resolves-to-its-path.md) | The registry seed gives My Documents' ShellFolder key WantsFORPARSING and Windows' Attributes, so its shell item resolves to C:\\users\\playport\\Documents (a game no longer saves under ::{450d8fba-…}) |
 | [0191](0191-fixed-base-executables-keep-the-window.md) | A game whose x86-64 executable must load in the executable window (relocations stripped or not DYNAMIC_BASE) gets no JIT pool over 768 MiB, so the window is held at every slide |
+| [0192](0192-steam-client-serves-remote-storage.md) | Playport's Steam client serves ISteamRemoteStorage's file methods from %APPDATA%\\GSE Saves\\<appid>\\remote, the folder the emulator and the cloud sync use (amends 0115, 0161) |
