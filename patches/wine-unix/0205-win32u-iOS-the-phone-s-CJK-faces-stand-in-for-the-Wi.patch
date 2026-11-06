@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 15:06:27 +0800
+Subject: [PATCH] win32u: iOS: the phone's CJK faces stand in for the Windows
+ ones
+
+A game in Traditional Chinese (CHRONO TRIGGER, 613830) drew every CJK
+character as a box. iOS has none of the Windows CJK faces, and the default
+system links name Windows files (MINGLIU.TTC, SIMSUN.TTC, ...) that
+win32u never finds, so no face in the fallback chain had the glyphs.
+
+load_mac_fonts already reads the phone's fonts through CoreText. After the
+system links load, each Windows CJK face name this prefix lacks becomes a
+replacement family for the phone's matching one (Traditional Chinese for
+PingFang TC, Simplified for PingFang SC, Japanese for Hiragino Sans,
+Korean for Apple SD Gothic Neo), and those four are linked after the other
+entries of Tahoma, Microsoft Sans Serif, MS Shell Dlg (2), System, Arial
+and Segoe UI, the faces every font falls back through. One stderr line
+names the faces found.
+
+Class: ios-port
+Evidence: docs/decisions/0187-the-phones-cjk-fonts-for-windows-ones.md
+Offered-upstream: no
+---
+ dlls/win32u/font.c | 78 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 78 insertions(+)
+
+diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
+index 97936e93adb..c6d172103c8 100644
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -27,6 +27,7 @@
+ #include <limits.h>
+ #include <stdarg.h>
+ #include <stdlib.h>
++#include <stdio.h>
+ #include <string.h>
+ #include <assert.h>
+ #include <pthread.h>
+@@ -2107,6 +2108,80 @@ static void load_system_links(void)
+     }
+ }
+ 
++#ifdef WINE_IOS
++/* iOS has none of the Windows CJK faces, so a CJK string drew as boxes: a game that names
++ * "Microsoft JhengHei" got Tahoma, and the system links name Windows files (MINGLIU.TTC, ...)
++ * that win32u never finds. The phone's own CJK families, which load_mac_fonts reads through
++ * CoreText, stand in: each Windows CJK name missing here is a replacement family for one of
++ * them, and they are linked after any other entry of the default fallbacks, so every face
++ * that lacks a glyph falls back to them. */
++static void load_ios_cjk_fonts(void)
++{
++    static const char *const phone[] = { "PingFang TC", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo" };
++    static const struct { const char *windows; unsigned int phone; } windows_names[] =
++    {
++        { "Microsoft JhengHei", 0 }, { "Microsoft JhengHei UI", 0 }, { "PMingLiU", 0 }, { "MingLiU", 0 },
++        { "DFKai-SB", 0 },
++        { "Microsoft YaHei", 1 }, { "Microsoft YaHei UI", 1 }, { "SimSun", 1 }, { "NSimSun", 1 },
++        { "SimHei", 1 }, { "KaiTi", 1 }, { "FangSong", 1 },
++        { "MS Gothic", 2 }, { "MS PGothic", 2 }, { "MS UI Gothic", 2 }, { "MS Mincho", 2 }, { "MS PMincho", 2 },
++        { "Meiryo", 2 }, { "Meiryo UI", 2 }, { "Yu Gothic", 2 }, { "Yu Gothic UI", 2 }, { "Yu Mincho", 2 },
++        { "Malgun Gothic", 3 }, { "Gulim", 3 }, { "GulimChe", 3 }, { "Dotum", 3 }, { "Batang", 3 },
++    };
++    static const char *const fallbacks[] =
++        { "Tahoma", "Microsoft Sans Serif", "MS Shell Dlg", "MS Shell Dlg 2", "System", "Arial", "Segoe UI" };
++    WCHAR name[LF_FACESIZE], target[LF_FACESIZE];
++    unsigned int i, j, found = 0, mapped = 0;
++    char have[128] = "";
++
++    for (i = 0; i < ARRAY_SIZE(phone); i++)
++    {
++        asciiz_to_unicode( name, phone[i] );
++        if (!find_family_from_any_name( name )) continue;
++        found |= 1u << i;
++        if (have[0]) strcat( have, ", " );
++        strcat( have, phone[i] );
++    }
++
++    for (i = 0; i < ARRAY_SIZE(windows_names); i++)
++    {
++        if (!(found & (1u << windows_names[i].phone))) continue;
++        asciiz_to_unicode( name, windows_names[i].windows );
++        if (find_family_from_any_name( name )) continue;
++        asciiz_to_unicode( target, phone[windows_names[i].phone] );
++        if (add_family_replacement( name, target )) mapped++;
++    }
++
++    for (i = 0; i < ARRAY_SIZE(fallbacks); i++)
++    {
++        struct gdi_font_link *link;
++
++        asciiz_to_unicode( name, fallbacks[i] );
++        if (!(link = add_gdi_font_link( name ))) continue;
++        for (j = 0; j < ARRAY_SIZE(phone); j++)
++        {
++            struct gdi_font_family *family;
++            struct gdi_font_link_entry *entry;
++            const struct gdi_font_face *face;
++            BOOL linked = FALSE;
++
++            if (!(found & (1u << j))) continue;
++            asciiz_to_unicode( target, phone[j] );
++            family = find_family_from_any_name( target );
++            if (list_empty( get_family_face_list( family ) )) continue;
++            LIST_FOR_EACH_ENTRY( entry, &link->links, struct gdi_font_link_entry, entry )
++                if (!facename_compare( entry->family_name, family->family_name, -1 )) linked = TRUE;
++            if (linked) continue;
++            face = LIST_ENTRY( list_head( get_family_face_list( family ) ), struct gdi_font_face, entry );
++            add_gdi_font_link_entry( link, family->family_name, face->fs );
++        }
++    }
++
++    dprintf( 2, "[fonts] iOS CJK faces: %s; %u Windows CJK names stand for them\n",
++             have[0] ? have : "none found", mapped );
++}
++#endif
++
+ /* see TranslateCharsetInfo */
+ BOOL translate_charset_info( DWORD *src, CHARSETINFO *cs, DWORD flags )
+ {
+@@ -6783,6 +6858,9 @@ UINT font_init(void)
+     load_gdi_font_subst();
+     load_gdi_font_replacements();
+     load_system_links();
++#ifdef WINE_IOS
++    load_ios_cjk_fonts();
++#endif
+     dump_gdi_font_list();
+     dump_gdi_font_subst();
+     return dpi;
