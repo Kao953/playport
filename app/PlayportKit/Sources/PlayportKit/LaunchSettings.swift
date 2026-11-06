@@ -34,6 +34,9 @@ public struct LaunchSettings: Codable, Equatable, Sendable {
     public var steamAPI: SteamAPISwap.Mode?
     /// Sync the game's saves with Steam Cloud (per game only); nil is on.
     public var cloudSync: Bool?
+    /// The Steam language the game is told, a SteamLanguage code (per game only, decision 0186);
+    /// nil is English.
+    public var gameLanguage: String?
     /// FEX's memory ordering, each switch over the game's profile (per game
     /// only; FEXProfile.launch).
     public var ordering: MemoryOrdering
@@ -79,7 +82,8 @@ public struct LaunchSettings: Codable, Equatable, Sendable {
                 cloudSync: Bool? = nil, ordering: MemoryOrdering = MemoryOrdering(), maxInst: Int? = nil,
                 x87Reduced: Bool? = nil, diskCache: Bool? = nil, runtime: String = "", graphicsOptions: String = "",
                 windowsServices: Bool? = nil, jitPoolMB: Int? = nil, khronosVulkanLoader: Bool? = nil,
-                endLauncherAfterSignIn: Bool? = nil) {
+                endLauncherAfterSignIn: Bool? = nil, gameLanguage: String? = nil) {
+        self.gameLanguage = gameLanguage
         self.screen = screen
         self.aspect = aspect
         self.frameLimit = frameLimit
@@ -110,6 +114,7 @@ public struct LaunchSettings: Codable, Equatable, Sendable {
         arguments = try c.decodeIfPresent(String.self, forKey: .arguments) ?? ""
         steamAPI = try c.decodeIfPresent(String.self, forKey: .steamAPI).flatMap(SteamAPISwap.Mode.init(rawValue:))
         cloudSync = try c.decodeIfPresent(Bool.self, forKey: .cloudSync)
+        gameLanguage = try c.decodeIfPresent(String.self, forKey: .gameLanguage)
         ordering = try c.decodeIfPresent(MemoryOrdering.self, forKey: .ordering) ?? MemoryOrdering()
         maxInst = try c.decodeIfPresent(Int.self, forKey: .maxInst)
         x87Reduced = try c.decodeIfPresent(Bool.self, forKey: .x87Reduced)
@@ -125,7 +130,7 @@ public struct LaunchSettings: Codable, Equatable, Sendable {
     /// Whether a person set nothing; endLauncherAfterSignIn, which no person sets, does not count.
     public var isEmpty: Bool {
         screen == nil && aspect == nil && frameLimit == nil && graphics == nil
-            && arguments.trimmingCharacters(in: .whitespaces).isEmpty && steamAPI == nil && cloudSync == nil
+            && arguments.trimmingCharacters(in: .whitespaces).isEmpty && steamAPI == nil && cloudSync == nil && gameLanguage == nil
             && ordering.isEmpty && maxInst == nil && x87Reduced == nil && diskCache == nil
             && runtime.trimmingCharacters(in: .whitespaces).isEmpty
             && graphicsOptions.trimmingCharacters(in: .whitespaces).isEmpty && windowsServices == nil

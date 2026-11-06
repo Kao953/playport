@@ -990,6 +990,7 @@ private struct GameDetailPage: View {
                 }
             }
             steamAPIRow(t)
+            gameLanguageRow(t)
         }
         if t.store != .steam, t.source != .cohort { localRows(t) }
         filesRows(t)
@@ -1029,6 +1030,26 @@ private struct GameDetailPage: View {
                           PadOption(id: SteamAPISwap.Mode.original.rawValue, label: Self.steamAPIModeText(.original))],
                 selected: settings.wrappedValue.steamAPI?.rawValue ?? "") {
                 settings.wrappedValue.steamAPI = SteamAPISwap.Mode(rawValue: $0)
+            }
+        }
+    }
+
+    /// The Steam language the game is told (decision 0186).
+    private func gameLanguageRow(_ t: InstalledTitle) -> some View {
+        let settings = launchSettings.binding(for: t.id)
+        let own = settings.wrappedValue.gameLanguage
+        return PadRow(id: "opt:gameLanguage", title: "Game language",
+                      value: SteamLanguage.name(own ?? SteamLanguage.fallback), accessory: .chevron,
+                      changed: own != nil, style: .plain, reset: own == nil ? nil : { settings.wrappedValue.gameLanguage = nil }) {
+            PadModal.shared.picker(
+                title: "Game language", context: "\(context) · Steam",
+                note: "The language Steam reports to the game, as Steam's language for this game does on a PC. "
+                    + "A game shows it only if it has that language; some need its language files installed. "
+                    + "Changes apply from the game's next launch.",
+                options: [PadOption(id: "", label: "Default", detail: SteamLanguage.name(SteamLanguage.fallback))]
+                    + SteamLanguage.all.map { PadOption(id: $0.code, label: $0.name) },
+                selected: own ?? "") {
+                settings.wrappedValue.gameLanguage = $0.isEmpty ? nil : $0
             }
         }
     }

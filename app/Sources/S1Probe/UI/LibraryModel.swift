@@ -352,10 +352,16 @@ final class LibraryModel: ObservableObject {
             tickets = session.broker
             if case .notOwned = session { owned = false }
         }
+        let gameLanguage = LaunchSettingsStore.shared.settings(for: t.id).gameLanguage
         let steamAPI = t.appID.map { app in
             LaunchCoordinator.SteamAPI(appID: app, root: Self.paths.games.appendingPathComponent(t.installDir, isDirectory: true),
                                        mode: settings.steamAPI,
-                                       settings: { await service?.emulatorSettings(appID: app) ?? .init(appID: app) },
+                                       settings: {
+                                           // The game's language from its page (decision 0186), for the client and the emulator.
+                                           var s = await service?.emulatorSettings(appID: app) ?? .init(appID: app)
+                                           s.language = gameLanguage ?? SteamLanguage.fallback
+                                           return s
+                                       },
                                        ticket: ticket, tickets: tickets, owned: owned)
         }
         let endTickets = { if tickets != nil { Task { await service?.endPlay() } } }
