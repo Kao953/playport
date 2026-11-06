@@ -24,6 +24,12 @@
 	</array>
 	<key>CFBundleDisplayName</key>
 	<string>Playport</string>
+	<!-- The container's Documents (the prefix, the games, Cloud Backups, the logs) in the Files app,
+	     On My iPhone › Playport: a game's folders open there from its page (decision 0180). -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<!-- The app delegate narrows these per launch: landscape for a title, portrait otherwise. -->

@@ -66,7 +66,8 @@ record depends on it.
   is not opened.
 - **Not shown.** Nothing in the UI shows or exports a log. The file is in
   the container's Documents, which the Files app does not show, so reading it
-  takes a computer.
+  takes a computer. (Amended by [0180](0180-a-games-folders-in-the-files-app.md): the Files
+  app shows Documents, the log included.)
 - **Checked.** `build/verify-ipa.py --variant release` fails an IPA whose
   executable holds a LadderKit, `Dev/` or `S1Probe`-module symbol, or a
   harness environment name or file name, or whose bundle carries a test

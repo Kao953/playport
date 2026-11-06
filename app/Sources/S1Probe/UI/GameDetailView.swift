@@ -1078,6 +1078,16 @@ private struct GameDetailPage: View {
     private func filesRows(_ t: InstalledTitle) -> some View {
         let checking = library.verifying.contains(t.id)
         let canCheck = library.canVerify(t) && !launch.running && !library.removing.contains(t.id) && job == nil
+        // The game's folders in the Files app, where a player can look at, copy, rename or move a
+        // save the game and Steam Cloud keep in different places (decision 0180).
+        PadRow(id: "opt:open-game-folder", title: "Game folder", subtitle: "C:\\Games\\\(t.installDir)",
+               value: "Open in Files", accessory: .chevron, style: .plain, hint: "Open") {
+            FilesApp.open(LibraryModel.paths.games.appendingPathComponent(t.installDir, isDirectory: true))
+        }
+        PadRow(id: "opt:open-user-folder", title: "Windows user folder", subtitle: "C:\\users\\playport: AppData, Documents, Saved Games",
+               value: "Open in Files", accessory: .chevron, style: .plain, hint: "Open") {
+            FilesApp.open(FilesApp.userFolder)
+        }
         PadRow(id: "opt:files", title: "Check game files", subtitle: verifyError(t), value: filesValue(t, checking: checking),
                style: .plain, hint: "Check") {
             if canCheck, !checking { library.verify(t.id) }
@@ -1536,6 +1546,30 @@ private struct SecondaryButton: View {
         .frame(height: 44)
         .background(PP.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
         .padItem(id, hint: hint, cornerRadius: 10) { if enabled { action() } }
+    }
+}
+
+// MARK: the Files app
+
+/// A folder of the container's Documents opened in the Files app (On My iPhone › Playport;
+/// Info.plist's UIFileSharingEnabled, decision 0180), through its `shareddocuments://` URL.
+enum FilesApp {
+    /// `C:\users\playport` in the prefix.
+    static var userFolder: URL {
+        LibraryModel.paths.games.deletingLastPathComponent().appendingPathComponent("users/playport", isDirectory: true)
+    }
+
+    static func open(_ folder: URL) {
+        let path = folder.standardizedFileURL.path
+        guard FileManager.default.fileExists(atPath: path),
+              let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "shareddocuments://" + encoded) else {
+            LibraryModel.log("files: \(folder.lastPathComponent) is not there to open")
+            return
+        }
+        UIApplication.shared.open(url, options: [:]) { ok in
+            if !ok { LibraryModel.log("files: the Files app did not open \(folder.lastPathComponent)") }
+        }
     }
 }
 
