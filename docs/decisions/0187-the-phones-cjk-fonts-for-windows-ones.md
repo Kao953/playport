@@ -12,7 +12,14 @@ nothing in the fallback chain had CJK glyphs.
 
 ## Decision
 
-`patches/wine-unix/0205`, iOS only, after the system links load:
+`patches/wine-unix/0205` and `0206`, iOS only:
+
+- the four faces' files are loaded by PostScript name through CoreText (PingFangTC-Regular,
+  PingFangSC-Regular, HiraginoSans-W3, AppleSDGothicNeo-Regular), as Madeira's `freetype_ios.c`
+  cuts off the sweep of every system font; a face with no family or style name is skipped rather
+  than crashing, and a `[fonts] iOS: …` line names each file or why a name has none;
+
+After the system links load:
 
 - each Windows CJK face name the prefix lacks is a replacement family for the phone's matching
   face: Traditional Chinese names (Microsoft JhengHei, PMingLiU, MingLiU, DFKai-SB) for PingFang TC,

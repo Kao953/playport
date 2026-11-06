@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 15:30:16 +0800
+Subject: [PATCH] win32u: iOS: load the phone's four CJK font files by name
+
+0205's replacements found none of PingFang TC/SC, Hiragino Sans or Apple
+SD Gothic Neo ("[fonts] iOS CJK faces: none found"): freetype_ios.c cuts
+off load_mac_fonts' system-font sweep, because a font AddFontToList could
+not parse took the process down. So the prefix had no CJK face at all.
+
+On iOS freetype_load_fonts now asks CoreText for the four faces by
+PostScript name (PingFangTC-Regular, PingFangSC-Regular, HiraginoSans-W3,
+AppleSDGothicNeo-Regular), checks that the font it returns is that one,
+and loads each file once; a [fonts] line names each file and its face
+count, or why a name has none. add_unix_face skips a face with no family
+or style name in any record Wine reads, instead of dereferencing NULL,
+and still reports the file's face count so the loop goes on.
+
+Class: ios-port
+Evidence: docs/decisions/0187-the-phones-cjk-fonts-for-windows-ones.md
+Offered-upstream: no
+---
+ dlls/win32u/freetype.c | 62 ++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 62 insertions(+)
+
+diff --git a/dlls/win32u/freetype.c b/dlls/win32u/freetype.c
+index ce899122009..5b96a2629ab 100644
+--- a/dlls/win32u/freetype.c
++++ b/dlls/win32u/freetype.c
+@@ -1027,6 +1027,16 @@ static int add_unix_face( const char *unix_name, const WCHAR *file, void *data_p
+     if (!(unix_face = unix_face_create( unix_name, data_ptr, data_size, face_index, flags )))
+         return 0;
+ 
++    /* A face with no family or style name in any record Wine reads (some of Apple's fonts)
++     * would be dereferenced below and in add_gdi_face: skip it. */
++    if (!unix_face->family_name || !unix_face->style_name)
++    {
++        WARN( "Ignoring %s face %u: no family or style name\n", debugstr_a(unix_name), (UINT)face_index );
++        if (num_faces) *num_faces = unix_face->num_faces;
++        unix_face_destroy( unix_face );
++        return 0;
++    }
++
+     if (unix_face->family_name[0] == '.') /* Ignore fonts with names beginning with a dot */
+     {
+         TRACE("Ignoring %s since its family name begins with a dot\n", debugstr_a(unix_name));
+@@ -1449,6 +1459,55 @@ static void load_mac_fonts(void)
+     CFRelease(urls);
+ }
+ 
++#ifdef WINE_IOS
++/* iOS: the system-font sweep above is cut off (freetype_ios.c: a font AddFontToList cannot
++ * parse took the process down), so the prefix had no CJK face at all. Ask CoreText for the
++ * files of the phone's four CJK faces by PostScript name and load those files alone. A name
++ * CoreText does not have comes back as another font, so the PostScript name is checked. */
++static void load_ios_cjk_font_files(void)
++{
++    static const char *const names[] =
++        { "PingFangTC-Regular", "PingFangSC-Regular", "HiraginoSans-W3", "AppleSDGothicNeo-Regular" };
++    char loaded[4][PATH_MAX];
++    unsigned int i, j, count = 0;
++
++    for (i = 0; i < ARRAY_SIZE(names); i++)
++    {
++        CFStringRef name = CFStringCreateWithCString( NULL, names[i], kCFStringEncodingUTF8 ), ps;
++        CTFontRef font;
++        CFURLRef url;
++        char path[PATH_MAX];
++        BOOL same, seen = FALSE;
++
++        if (!name) continue;
++        font = CTFontCreateWithName( name, 12.0, NULL );
++        if (!font) { CFRelease( name ); continue; }
++        ps = CTFontCopyPostScriptName( font );
++        same = ps && CFStringCompare( ps, name, 0 ) == kCFCompareEqualTo;
++        if (ps) CFRelease( ps );
++        CFRelease( name );
++        url = same ? CTFontCopyAttribute( font, kCTFontURLAttribute ) : NULL;
++        CFRelease( font );
++        if (!url)
++        {
++            dprintf( 2, "[fonts] iOS: %s %s\n", names[i], same ? "has no file" : "not on this phone" );
++            continue;
++        }
++        if (!CFURLGetFileSystemRepresentation( url, TRUE, (UInt8 *)path, sizeof(path) ))
++        {
++            CFRelease( url );
++            continue;
++        }
++        CFRelease( url );
++        for (j = 0; j < count; j++) if (!strcmp( loaded[j], path )) seen = TRUE;
++        if (seen) continue;
++        dprintf( 2, "[fonts] iOS: %s in %s: %d face(s)\n", names[i], path,
++                 AddFontToList( NULL, path, NULL, 0, ADDFONT_EXTERNAL_FONT ) );
++        strcpy( loaded[count++], path );
++    }
++}
++#endif
++
+ #endif
+ 
+ 
+@@ -1545,6 +1604,9 @@ static void freetype_load_fonts(void)
+     load_fontconfig_fonts();
+ #elif defined(__APPLE__)
+     load_mac_fonts();
++#ifdef WINE_IOS
++    load_ios_cjk_font_files();
++#endif
+ #elif defined(__ANDROID__)
+     ReadFontDir("/system/fonts", TRUE);
+ #endif
