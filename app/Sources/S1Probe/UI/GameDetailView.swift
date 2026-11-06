@@ -841,6 +841,7 @@ private struct GameDetailPage: View {
                         graphicsRows(t)
                         GameControlsOptionRows(titleID: t.id, context: context)
                         gameRows(t, g)
+                        emulatorRows(t)
                         #if !PLAYPORT_RELEASE
                         developerRows(t)
                         #endif
@@ -1178,16 +1179,15 @@ private struct GameDetailPage: View {
 
     // MARK: Developer (dev builds)
 
-    #if !PLAYPORT_RELEASE
-    /// FEX's four ordering switches, its block size and x87 precision over the game's profile, madeira.cfg
-    /// keys over the game's own, the steam_api the game loads, and the build's facts. Not in the player's app (decision 0034).
+    /// FEX's four ordering switches, its block size, x87 precision and disk cache over the game's profile,
+    /// in both builds (decision 0185): a game that crashes in the x86 emulator can be tried another way.
     @ViewBuilder
-    private func developerRows(_ t: InstalledTitle) -> some View {
+    private func emulatorRows(_ t: InstalledTitle) -> some View {
         let settings = launchSettings.binding(for: t.id)
         let exe = (try? t.launchPlan(cohort: LibraryModel.cohort))?.exe ?? ""
         let profile = FEXProfile.defaults(appID: t.appID, exe: exe)
         let onOff: (Bool) -> String = { $0 ? "On" : "Off" }
-        PadSectionHeader(text: "Developer").id("developer")
+        PadSectionHeader(text: "x86 emulator").id("developer")
         ForEach(MemoryOrdering.Setting.allCases, id: \.self) { s in
             let v = OptionValue.of(own: settings.wrappedValue.ordering[s], inherited: profile[s] == true, name: onOff)
             PadRow(id: "opt:ordering-\(s.rawValue)", title: LaunchSettingsText.ordering(s), value: v.text, accessory: .chevron,
@@ -1238,6 +1238,16 @@ private struct GameDetailPage: View {
                 settings.wrappedValue.diskCache = $0.isEmpty ? nil : $0 == "on"
             }
         }
+    }
+
+    #if !PLAYPORT_RELEASE
+    /// madeira.cfg keys over the game's own, the steam_api the game loads, and the build's facts. Not in the
+    /// player's app (decision 0034).
+    @ViewBuilder
+    private func developerRows(_ t: InstalledTitle) -> some View {
+        let settings = launchSettings.binding(for: t.id)
+        let onOff: (Bool) -> String = { $0 ? "On" : "Off" }
+        PadSectionHeader(text: "Developer")
         // A compatibility default's keys stay under the person's own, per key (decision 0091).
         let compat = launchSettings.compat(for: t.id)?.settings
         // Windows services (decision 0107): services.exe and the services it starts, for this play.
