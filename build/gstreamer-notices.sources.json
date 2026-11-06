@@ -110,6 +110,18 @@
       "sha256": "87256969c82cf3bc8574301f3e7044a90de0ac500a5a27d8ba38c4dde894dd8b",
       "version": "1.28.7"
     },
+    "gst-plugins-ugly-1.0": {
+      "archive": "gst-plugins-ugly-1.28.7.tar.xz",
+      "recipe": "recipes/gst-plugins-ugly-1.0.recipe",
+      "recipe_sha256": "5a247497c7a3b05ec76f75680c5aa237f335a171c6e008b92ccd9ec80a577317",
+      "required_notices": [
+        "COPYING"
+      ],
+      "reviewed_download_url": "https://gstreamer.freedesktop.org/src/gst-plugins-ugly/gst-plugins-ugly-1.28.7.tar.xz",
+      "root": "gst-plugins-ugly-1.28.7",
+      "sha256": "2b681170ddc22b6b283cafeed48f427c30a17056974a6a9ed137c354e0f7730c",
+      "version": "1.28.7"
+    },
     "gstreamer-1.0": {
       "archive": "gstreamer-1.28.7.tar.xz",
       "recipe": "recipes/gstreamer-1.0.recipe",
@@ -236,7 +248,7 @@
   "gstreamer_tag_commit": "070125524a8422e29d3b69a372ed4f62fd343ffa",
   "release": "1.28.7",
   "schema": 1,
-  "stage_sha256": "f500a039ac5ccca704c08976ea4f95b2086f4af56a63bce06f0c4af9195b35fa",
+  "stage_sha256": "3401a1c327640f531407e2621c9ddafd5387d56636f67c407039feadc49675b5",
   "status": "preparatory-source-review-not-binary-build-lock",
   "unresolved": [
     "Exact Cerbero build commit/configuration/manifest associated with binary archive",

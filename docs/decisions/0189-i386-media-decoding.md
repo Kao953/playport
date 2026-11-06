@@ -21,6 +21,9 @@ addresses.
 - `patches/madeira-unix/0289`: an i386 caller of winegstreamer gets
   `winegstreamer_unix_call_wow64_funcs`.
 - `build/stages/gstreamer.sh` exports that table from the prelinked object and fails without it.
+- The game's movies are WMV in ASF, which the plugin set could not open: `gstreamer.sh` registers
+  gst-plugins-ugly's `asf` (libav already decodes WMV, VC-1 and WMA), and
+  `build/gstreamer-notices.sources.json` adds gst-plugins-ugly 1.28.7 (LGPL-2.1, `COPYING`).
 
 ## Consequences
 

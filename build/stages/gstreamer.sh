@@ -26,7 +26,9 @@
 # deinterlace, videoflip) and the formats titles have been seen to play:
 # MP4 (isomp4) with H.264 and AAC (Hollow Knight's cinematics; libav decodes
 # both: VideoToolbox's vtdec is registered but ranked below it, see plugins.c),
-# WebM/Matroska with VP8/VP9 and Vorbis/Opus, MPEG-1/2 video and audio (libav).
+# WebM/Matroska with VP8/VP9 and Vorbis/Opus, MPEG-1/2 video and audio (libav),
+# and ASF (gst-plugins-ugly's asf) with WMV, VC-1 and WMA (libav): Resident Evil
+# HD REMASTER's movies.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 . "$HERE/../lib.sh"
@@ -40,7 +42,7 @@ GST=$CACHE_DIR/ios-arm64
 # GST_PLUGIN_STATIC_DECLARE names (gst_plugin_<name>_register in libGStreamer.a).
 PLUGINS="coreelements typefindfunctions app playback videoconvertscale audioconvert audioresample
          deinterlace videofilter autodetect isomp4 matroska audioparsers videoparsersbad
-         applemedia libav vpx vorbis opus ogg"
+         applemedia libav vpx vorbis opus ogg asf"
 
 fetch() {
     local tar=$CACHE_DIR/gstreamer-$TAG-xcframework.tar.xz

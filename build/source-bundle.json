@@ -197,7 +197,7 @@
       "pin": "gstreamer",
       "gstreamer_lock": "build/gstreamer-notices.sources.json",
       "stage": "build/stages/gstreamer.sh",
-      "why": "GStreamer's iOS release, prelinked into winegstreamer's unix side (build/stages/gstreamer.sh): Cerbero's 1.28.7 recipes and the 17 source archives of what its registered plugins reach, each checked against the lock's sha256"
+      "why": "GStreamer's iOS release, prelinked into winegstreamer's unix side (build/stages/gstreamer.sh): Cerbero's 1.28.7 recipes and the 18 source archives of what its registered plugins reach, each checked against the lock's sha256"
     },
     {
       "name": "ca-bundle",

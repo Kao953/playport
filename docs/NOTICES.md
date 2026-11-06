@@ -28,7 +28,7 @@ in that answer.
 # By hand: first the collection inputs, from their committed locks, into the cache
 # (build/mingw-notices.lock.json's two checkouts, build/llvm-runtime-notices.lock.json's
 # sparse LLVM checkout, build/rust-dist.lock.json's three archives and
-# build/gstreamer-notices.sources.json's Cerbero and 17 recipe archives):
+# build/gstreamer-notices.sources.json's Cerbero and 18 recipe archives):
 python3 build/notices-inputs.py .work/cache           # --plan: what is missing; fetches nothing
 # Collection never clones or fetches. MINGW_SOURCE, LLVM_MINGW_SOURCE, LLVM_RUNTIME_SOURCE,
 # RUST_NOTICE_DIST, GST_NOTICE_CERBERO and GST_NOTICE_SOURCES name other prepared inputs
