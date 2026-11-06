@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 17:54:23 +0800
+Subject: [PATCH] winegstreamer: iOS: WoW64 thunks put guest pointers through
+ the window
+
+In Playport's WoW64 window an i386 caller's address is an offset in its
+window, not a host address, so the 32-bit thunks' ULongToPtr handed
+GStreamer guest addresses. On iOS ULongToPtr in the thunks goes through
+ios_wow64_to_host for the calling process's window. A wg_sample's data
+(a guest buffer the PE side sets and never reads back) is turned into its
+host address once, when transform_push_data, transform_read_data or
+muxer_push_sample hands the sample over, since GStreamer's streaming
+threads, which own no window, read it later.
+
+Class: ios-port
+Evidence: docs/decisions/0189-i386-media-decoding.md
+Offered-upstream: no
+---
+ dlls/winegstreamer/wg_parser.c | 29 ++++++++++++++++++++++++++---
+ 1 file changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/dlls/winegstreamer/wg_parser.c b/dlls/winegstreamer/wg_parser.c
+index b3d5bbceb56..dd618f2e05f 100644
+--- a/dlls/winegstreamer/wg_parser.c
++++ b/dlls/winegstreamer/wg_parser.c
+@@ -1999,6 +1999,29 @@ C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == unix_wg_funcs_count);
+ 
+ #ifdef _WIN64
+ 
++#ifdef WINE_IOS
++/* Playport: an i386 caller's addresses are offsets in its WoW64 window, not host addresses, so
++ * every pointer in a 32-bit parameter block goes through the window. A wg_sample's data, set by
++ * the PE side and never read back there, is turned into its host address once, at the call that
++ * hands the sample over: GStreamer's streaming threads, which own no window, read it later. */
++#include "wine/ios_wow64.h"
++#undef ULongToPtr
++#define ULongToPtr(ul) ios_wow64_to_host( ios_wow64_current_base(), (UINT32)(ul) )
++
++static struct wg_sample *wow64_sample_to_host( UINT32 guest )
++{
++    struct wg_sample *sample = ULongToPtr( guest );
++    uintptr_t base = ios_wow64_current_base();
++
++    if (sample && base && sample->data && sample->data <= UINT32_MAX)
++        sample->data = (UINT_PTR)ios_wow64_to_host( base, (UINT32)sample->data );
++    return sample;
++}
++#else
++#define wow64_sample_to_host(guest) ((struct wg_sample *)ULongToPtr(guest))
++#endif
++
++
+ typedef ULONG PTR32;
+ 
+ struct wg_media_type32
+@@ -2235,7 +2258,7 @@ NTSTATUS wow64_wg_transform_push_data(void *args)
+     struct wg_transform_push_data_params params =
+     {
+         .transform = params32->transform,
+-        .sample = ULongToPtr(params32->sample),
++        .sample = wow64_sample_to_host(params32->sample),
+     };
+     NTSTATUS ret;
+ 
+@@ -2255,7 +2278,7 @@ NTSTATUS wow64_wg_transform_read_data(void *args)
+     struct wg_transform_read_data_params params =
+     {
+         .transform = params32->transform,
+-        .sample = ULongToPtr(params32->sample),
++        .sample = wow64_sample_to_host(params32->sample),
+     };
+     NTSTATUS ret;
+ 
+@@ -2310,7 +2333,7 @@ NTSTATUS wow64_wg_muxer_push_sample(void *args)
+     struct wg_muxer_push_sample_params params =
+     {
+         .muxer = params32->muxer,
+-        .sample = ULongToPtr(params32->sample),
++        .sample = wow64_sample_to_host(params32->sample),
+         .stream_id = params32->stream_id,
+     };
+     return wg_muxer_push_sample(&params);

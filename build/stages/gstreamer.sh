@@ -15,8 +15,9 @@
 # the pins.lock gstreamer tag), checked against its sha256 below: one static
 # archive, libGStreamer.a, with GLib, every plugin and their libraries. The
 # prelink (ld64 -r) takes from it only the members winegstreamer and the
-# registered plugins reach, and exports one symbol, the call table
-# (winegstreamer_unix_call_funcs, routed by patches/madeira-unix 0031): the
+# registered plugins reach, and exports the two call tables
+# (winegstreamer_unix_call_funcs, routed by patches/madeira-unix 0031, and the
+# i386 callers' winegstreamer_unix_call_wow64_funcs, routed by 0289): the
 # rest, GStreamer's own GnuTLS, GMP and FFmpeg among them, is private to the
 # object and cannot collide with the app's archives.
 #
@@ -121,15 +122,17 @@ C
         -o "$obj/prelinked.o" "$obj"/*.o "$GST/libGStreamer.a"
     # -S: no debug map, whose entries would name each member by its path on this machine.
     "$LD64" -r -S -arch arm64 -platform_version ios 17.0 26.5 -syslibroot "$IOSSDK" \
-        -exported_symbol _winegstreamer_unix_call_funcs -exported_symbol _rust_eh_personality \
+        -exported_symbol _winegstreamer_unix_call_funcs -exported_symbol _winegstreamer_unix_call_wow64_funcs -exported_symbol _rust_eh_personality \
         -o "$obj/winegstreamer_unix.o" "$obj/prelinked.o"
     rm "$obj/prelinked.o"
     llvm-ar rcs "$out/libwinegstreamer_unix.a" "$obj/winegstreamer_unix.o"
     llvm-nm "$obj/winegstreamer_unix.o" > "$obj/symbols.txt"
     grep -Eq '^[0-9a-f]+ [DS] _winegstreamer_unix_call_funcs$' "$obj/symbols.txt" ||
         { echo "gstreamer: winegstreamer_unix_call_funcs is not exported" >&2; exit 1; }
-    [ "$(grep -Ec '^[0-9a-f]+ [A-TV-Z] ' "$obj/symbols.txt")" = 2 ] ||
-        { echo "gstreamer: the object exports more than the call table and rust_eh_personality" >&2; exit 1; }
+    grep -Eq '^[0-9a-f]+ [DS] _winegstreamer_unix_call_wow64_funcs$' "$obj/symbols.txt" ||
+        { echo "gstreamer: winegstreamer_unix_call_wow64_funcs is not exported" >&2; exit 1; }
+    [ "$(grep -Ec '^[0-9a-f]+ [A-TV-Z] ' "$obj/symbols.txt")" = 3 ] ||
+        { echo "gstreamer: the object exports more than the two call tables and rust_eh_personality" >&2; exit 1; }
     for p in $PLUGINS; do
         grep -q " _gst_plugin_${p}_get_desc$" "$obj/symbols.txt" ||
             { echo "gstreamer: plugin $p is not in the object" >&2; exit 1; }

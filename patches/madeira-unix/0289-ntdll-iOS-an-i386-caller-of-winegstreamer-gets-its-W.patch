@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 17:54:23 +0800
+Subject: [PATCH] ntdll: iOS: an i386 caller of winegstreamer gets its WoW64
+ call table
+
+An i386 game's winegstreamer unix calls went to the stub table ("[unixlib]
+module ... (winegstreamer.dll) WoW64 -> ... (stub table)"): no Media
+Foundation or DirectShow decoding at all. Resident Evil HD REMASTER showed
+its Capcom logo and then a black screen, waiting on a movie that never
+played.
+
+winegstreamer's WoW64 thunks now put every guest pointer through the
+window (patches/wine-unix 0208) and build/stages/gstreamer.sh exports
+winegstreamer_unix_call_wow64_funcs, so an i386 caller gets that table.
+
+Class: ios-port
+Evidence: docs/decisions/0189-i386-media-decoding.md
+Offered-upstream: no
+---
+ build/ntdll-unix/virtual_ios.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/build/ntdll-unix/virtual_ios.c b/build/ntdll-unix/virtual_ios.c
+index 64c0a95..1df624f 100644
+--- a/build/ntdll-unix/virtual_ios.c
++++ b/build/ntdll-unix/virtual_ios.c
+@@ -8971,6 +8971,7 @@ extern const void *opengl32_unix_call_wow64_funcs[];
+  * libwinegstreamer_unix.a together with a statically registered plugin set
+  * (Playport build/stages/gstreamer.sh). */
+ extern const void *winegstreamer_unix_call_funcs[];
++extern const void *winegstreamer_unix_call_wow64_funcs[];
+ 
+ /* Playport: the game's Steam API emulator (a native steam_api64.dll or
+  * steam_api.dll, matched by its export name) asks the host app for Steam's
+@@ -9168,6 +9169,8 @@ static NTSTATUS load_builtin_unixlib( void *module, BOOL wow, const void **funcs
+             else if (*funcs == (const void *)playport_steamclient_unix_call_funcs) wow_funcs = playport_steamclient_unix_call_funcs;
+             else if (*funcs == (const void *)playport_url_unix_call_funcs) wow_funcs = playport_url_unix_call_funcs;
+             else if (*funcs == (const void *)opengl32_unix_call_funcs) wow_funcs = opengl32_unix_call_wow64_funcs;
++            /* winegstreamer's thunks put each guest pointer through the window (patches/wine-unix 0208). */
++            else if (*funcs == (const void *)winegstreamer_unix_call_funcs) wow_funcs = winegstreamer_unix_call_wow64_funcs;
+             if (!wow_funcs)
+             {
+                 pthread_once( &ios_stub_tables_once, ios_init_stub_tables );
