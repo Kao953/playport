@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 16:09:50 +0800
+Subject: [PATCH] win32u: iOS: any loaded CJK family stands in when the phone's
+ is not there
+
+The phone's CJK font files load no face here (0206 logs "0 face(s)" for
+PingFangUI.ttc, HiraginoKakuGothic.ttc and AppleSDGothicNeo.ttc), and a
+Traditional Chinese font the player put in C:\windows\Fonts under another
+file and family name than Windows' MSJH.TTC matched no system link.
+CHRONO TRIGGER in Traditional Chinese draws with the default GUI font, so
+its text stayed boxes.
+
+For each of Traditional Chinese, Simplified Chinese, Japanese and Korean,
+load_ios_cjk_fonts now takes the phone's face if it loaded, else the first
+loaded family whose code pages cover the script (FS_CHINESETRAD,
+FS_CHINESESIMP, FS_JISJAPAN, FS_WANSUNG), whatever its file or family name.
+The Windows names of that script and the default fallbacks' links point at
+it as before, and the [fonts] line names the family each script got.
+
+Class: ios-port
+Evidence: docs/decisions/0187-the-phones-cjk-fonts-for-windows-ones.md
+Offered-upstream: no
+---
+ dlls/win32u/font.c | 69 +++++++++++++++++++++++++++++-----------------
+ 1 file changed, 44 insertions(+), 25 deletions(-)
+
+diff --git a/dlls/win32u/font.c b/dlls/win32u/font.c
+index c6d172103c8..711b3aa2d4b 100644
+--- a/dlls/win32u/font.c
++++ b/dlls/win32u/font.c
+@@ -2110,15 +2110,24 @@ static void load_system_links(void)
+ 
+ #ifdef WINE_IOS
+ /* iOS has none of the Windows CJK faces, so a CJK string drew as boxes: a game that names
+- * "Microsoft JhengHei" got Tahoma, and the system links name Windows files (MINGLIU.TTC, ...)
+- * that win32u never finds. The phone's own CJK families, which load_mac_fonts reads through
+- * CoreText, stand in: each Windows CJK name missing here is a replacement family for one of
+- * them, and they are linked after any other entry of the default fallbacks, so every face
+- * that lacks a glyph falls back to them. */
++ * "Microsoft JhengHei", or draws with the default GUI font as CHRONO TRIGGER does in Traditional
++ * Chinese, got Tahoma, and the default system links name Windows files (MINGLIU.TTC, ...) that
++ * are not here. For each of Traditional Chinese, Simplified Chinese, Japanese and Korean a face
++ * stands in: the phone's (freetype.c load_ios_cjk_font_files), else any loaded family whose
++ * code pages cover it, such as a font the player put in C:\windows\Fonts whatever its file or
++ * family name. Each Windows face name of that script the prefix lacks becomes a replacement
++ * family for it, and the four are linked after the other entries of the default fallbacks, so
++ * every face that lacks a glyph falls back to them. */
+ static void load_ios_cjk_fonts(void)
+ {
+-    static const char *const phone[] = { "PingFang TC", "PingFang SC", "Hiragino Sans", "Apple SD Gothic Neo" };
+-    static const struct { const char *windows; unsigned int phone; } windows_names[] =
++    static const struct { const char *label, *phone; DWORD csb; } scripts[] =
++    {
++        { "Traditional Chinese", "PingFang TC", FS_CHINESETRAD },
++        { "Simplified Chinese", "PingFang SC", FS_CHINESESIMP },
++        { "Japanese", "Hiragino Sans", FS_JISJAPAN },
++        { "Korean", "Apple SD Gothic Neo", FS_WANSUNG },
++    };
++    static const struct { const char *windows; unsigned int script; } windows_names[] =
+     {
+         { "Microsoft JhengHei", 0 }, { "Microsoft JhengHei UI", 0 }, { "PMingLiU", 0 }, { "MingLiU", 0 },
+         { "DFKai-SB", 0 },
+@@ -2130,26 +2139,40 @@ static void load_ios_cjk_fonts(void)
+     };
+     static const char *const fallbacks[] =
+         { "Tahoma", "Microsoft Sans Serif", "MS Shell Dlg", "MS Shell Dlg 2", "System", "Arial", "Segoe UI" };
+-    WCHAR name[LF_FACESIZE], target[LF_FACESIZE];
+-    unsigned int i, j, found = 0, mapped = 0;
+-    char have[128] = "";
++    struct gdi_font_family *chosen[ARRAY_SIZE(scripts)] = { 0 }, *family;
++    WCHAR name[LF_FACESIZE];
++    unsigned int i, j, mapped = 0;
++    char have[512] = "", family_a[LF_FACESIZE * 3];
+ 
+-    for (i = 0; i < ARRAY_SIZE(phone); i++)
++    for (i = 0; i < ARRAY_SIZE(scripts); i++)
+     {
+-        asciiz_to_unicode( name, phone[i] );
+-        if (!find_family_from_any_name( name )) continue;
+-        found |= 1u << i;
+-        if (have[0]) strcat( have, ", " );
+-        strcat( have, phone[i] );
++        asciiz_to_unicode( name, scripts[i].phone );
++        if ((family = find_family_from_any_name( name )) && !list_empty( get_family_face_list( family ) ))
++            chosen[i] = family;
++        else WINE_RB_FOR_EACH_ENTRY( family, &family_name_tree, struct gdi_font_family, name_entry )
++        {
++            const struct gdi_font_face *face;
++            if (family->replacement || list_empty( &family->faces ) || family->family_name[0] == '@') continue;
++            face = LIST_ENTRY( list_head( &family->faces ), struct gdi_font_face, entry );
++            if (face->fs.fsCsb[0] & scripts[i].csb) { chosen[i] = family; break; }
++        }
++        if (!chosen[i]) continue;
++        ntdll_wcstoumbs( chosen[i]->family_name, lstrlenW( chosen[i]->family_name ) + 1, family_a, sizeof(family_a), FALSE );
++        if (have[0]) strcat( have, "; " );
++        if (strlen( have ) + strlen( family_a ) + 32 < sizeof(have))
++        {
++            strcat( have, scripts[i].label );
++            strcat( have, ": " );
++            strcat( have, family_a );
++        }
+     }
+ 
+     for (i = 0; i < ARRAY_SIZE(windows_names); i++)
+     {
+-        if (!(found & (1u << windows_names[i].phone))) continue;
++        if (!(family = chosen[windows_names[i].script])) continue;
+         asciiz_to_unicode( name, windows_names[i].windows );
+         if (find_family_from_any_name( name )) continue;
+-        asciiz_to_unicode( target, phone[windows_names[i].phone] );
+-        if (add_family_replacement( name, target )) mapped++;
++        if (add_family_replacement( name, family->family_name )) mapped++;
+     }
+ 
+     for (i = 0; i < ARRAY_SIZE(fallbacks); i++)
+@@ -2158,17 +2181,13 @@ static void load_ios_cjk_fonts(void)
+ 
+         asciiz_to_unicode( name, fallbacks[i] );
+         if (!(link = add_gdi_font_link( name ))) continue;
+-        for (j = 0; j < ARRAY_SIZE(phone); j++)
++        for (j = 0; j < ARRAY_SIZE(scripts); j++)
+         {
+-            struct gdi_font_family *family;
+             struct gdi_font_link_entry *entry;
+             const struct gdi_font_face *face;
+             BOOL linked = FALSE;
+ 
+-            if (!(found & (1u << j))) continue;
+-            asciiz_to_unicode( target, phone[j] );
+-            family = find_family_from_any_name( target );
+-            if (list_empty( get_family_face_list( family ) )) continue;
++            if (!(family = chosen[j])) continue;
+             LIST_FOR_EACH_ENTRY( entry, &link->links, struct gdi_font_link_entry, entry )
+                 if (!facename_compare( entry->family_name, family->family_name, -1 )) linked = TRUE;
+             if (linked) continue;
