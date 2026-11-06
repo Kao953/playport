@@ -865,6 +865,8 @@ final class LibraryModel: ObservableObject {
                 if t.store == .gog { await GOGAccount.shared.installer.forget(productID: t.key.id) }
                 if t.store == .epic { await EpicAccount.shared.installer.forget(t.key.id) }
                 if t.store == .battlenet { BattleNetStore.forget(t.key) }
+                // Its saves in the install folder went too: the next sync must download Steam's.
+                if t.store == .steam, let app = t.appID { await SteamAccountModel.current?.uninstalled(app) }
             } catch {
                 LibraryModel.log("uninstall \(t.name) failed: \(error)")
                 failure = "\(error)"

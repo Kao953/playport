@@ -975,6 +975,25 @@ public actor SteamService {
         if let dir = cloudURL { try? FileManager.default.removeItem(at: dir.appendingPathComponent("\(appID).json")) }
     }
 
+    /// After the game's uninstall: what the last sync recorded of files in its install
+    /// folder (`%GameInstall%…`) goes, with the user folders mapped there and conflicts
+    /// open on them. Those files went with the folder, and a file the baseline still had
+    /// would read as one the player deleted, which a sync never downloads again: a
+    /// reinstall would start without its Steam saves. Files elsewhere (AppData,
+    /// Documents) stay on the phone and keep their record.
+    public func forgetCloudInstallFiles(appID: UInt32) {
+        guard var r = loadCloud(appID) else { return }
+        func inInstall(_ name: String) -> Bool { name.lowercased().hasPrefix("%gameinstall%") }
+        let before = r.baseline.files.count
+        r.baseline.files = r.baseline.files.filter { !inInstall($0.key) }
+        r.baseline.aliases = r.baseline.aliases?.filter { !inInstall($0.prefix) }
+        if r.baseline.aliases?.isEmpty == true { r.baseline.aliases = nil }
+        r.conflicts = r.conflicts.filter { !inInstall($0.name) }
+        saveCloud(appID, r)
+        log.info("cloud", "app \(appID): uninstalled; \(before - r.baseline.files.count) install-folder file(s) forgotten, "
+                 + "the next sync downloads Steam's")
+    }
+
     private var cloudURL: URL? { stateDirectory?.appendingPathComponent(Self.cloudDirectory, isDirectory: true) }
     private var memoryCloud: [UInt32: CloudRecord] = [:]
 

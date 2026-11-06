@@ -292,6 +292,32 @@ final class CloudServiceTests: XCTestCase {
     }
 
 
+    /// A save in the install folder goes with an uninstall. Without forgetting it, the
+    /// reinstall's sync reads it as deleted on the phone and never downloads it again.
+    func testAReinstallGetsSteamsInstallFolderSavesBack() async throws {
+        let slot = "%GameInstall%Save/slot0/UserData"
+        let b = FakeBackend()
+        await b.set(cloud: [slot: Array("pc progress".utf8), saveName: Array("appdata save".utf8)])
+        await b.set(library: [2654470], [2654470: try bunnyGardenCloudApp()])
+        await b.set(stored: FakeBackend.session(exp: 2_000_000_000))
+        let s = SteamService(backend: b, log: .silent, stateDirectory: dir.appendingPathComponent("state"))
+        _ = await s.restoreIfPossible()
+        let game = dir.appendingPathComponent("Games/BUNNY GARDEN")
+        let bunny = Cloud.Roots(user: dir.appendingPathComponent("users/playport"), gameInstall: game,
+                                remote: dir.appendingPathComponent("GSE Saves/2654470/remote"))
+        let save = game.appendingPathComponent("Save/slot0/UserData")
+        let first = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups)
+        XCTAssertEqual(first.downloaded.sorted(), [slot, saveName].sorted())
+
+        // The uninstall takes the folder; the record of it goes with it.
+        try FileManager.default.removeItem(at: game)
+        await s.forgetCloudInstallFiles(appID: 2654470)
+        let again = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups)
+        XCTAssertEqual(again.downloaded, [slot], "only the install folder's save comes back")
+        XCTAssertEqual(text(save), "pc progress")
+        XCTAssertEqual(again.conflicts, [], "the AppData save kept its record: nothing to settle")
+    }
+
     func testAFreshPhoneGetsSteamsSaveAndThenSendsItsPlays() async throws {
         let b = FakeBackend()
         await b.set(cloud: [saveName: Array("from the PC".utf8)])

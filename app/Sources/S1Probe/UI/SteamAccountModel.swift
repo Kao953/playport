@@ -173,6 +173,14 @@ final class SteamAccountModel: ObservableObject {
         }
     }
 
+    /// After the game's uninstall: its install folder's files leave the last sync's record
+    /// (SteamService.forgetCloudInstallFiles), so a reinstall gets Steam's saves back.
+    func uninstalled(_ appID: UInt32) async {
+        await service.forgetCloudInstallFiles(appID: appID)
+        cloud[appID] = nil
+        cloudErrors[appID] = nil
+    }
+
     #if !PLAYPORT_RELEASE
     /// A dev build's Game options: forget the game's last sync, then sync as a first one.
     func forgetCloud(_ appID: UInt32) async {
