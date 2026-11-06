@@ -3102,6 +3102,11 @@ WINE REGISTRY Version 2
 @="C:\\windows\\system32\\shell32.dll"
 "ThreadingModel"="Apartment"
 
+;; playport:top-up
+[Software\\Classes\\CLSID\\{450D8FBA-AD25-11D0-98A8-0800361B1103}\\ShellFolder]
+"Attributes"=dword:f0400174
+"WantsFORPARSING"=""
+
 [Software\\Classes\\CLSID\\{4516EC43-8F20-11D0-9B6D-0000C0781BC3}]
 @="DirectX File"
 

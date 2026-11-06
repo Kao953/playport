@@ -288,6 +288,17 @@ COMPUTER_NAME = {
     "System\\CurrentControlSet\\Services\\Tcpip\\Parameters": [
         ("Domain", "sz", ""), ("Hostname", "sz", "playport")],
 }
+# My Documents' shell folder keys as Windows has them (HKCR\\CLSID\\{450D8FBA-…}\\ShellFolder).
+# SHGetFolderLocation(CSIDL_PERSONAL) gives the virtual My Documents item, and the desktop
+# folder resolves its parsing name to the folder's path only when WantsFORPARSING exists
+# (dlls/shell32/shfldr_desktop.c GetDisplayNameOf); without it SHGetPathFromIDList gave
+# "::{450d8fba-ad25-11d0-98a8-0800361b1103}", and Guilty Gear XX Accent Core Plus R made its
+# save folder under that and could not save. Neither wine.inf nor shell32's registration
+# writes them. Attributes is Windows' value (SFGAO_FILESYSTEM among them). Marked like PROFILE.
+SHELL_FOLDERS = {
+    "Software\\Classes\\CLSID\\{450D8FBA-AD25-11D0-98A8-0800361B1103}\\ShellFolder": [
+        ("Attributes", "dword", 0xF0400174), ("WantsFORPARSING", "sz", "")],
+}
 # The Media Foundation transforms the staged decoder DLLs register. Their
 # DllRegisterServer calls MFTRegister at run time instead of carrying the keys
 # as WINE_REGISTRY resources, so the scripts above do not have them, and a source
@@ -1373,6 +1384,9 @@ def generate():
     for path, values in STEAM_REDIST_RUN.items():
         for vname, vtype, data in values:
             hives["system"].value(path, vname, vtype, data)
+    for path, values in SHELL_FOLDERS.items():
+        for vname, vtype, data in values:
+            hives["system"].value(path, vname, vtype, data)
     for file, vname in FONTS.items():
         if not (RUNTIME_FONTS / file).is_file():
             raise SystemExit(f"{RUNTIME_FONTS / file} does not exist; FONTS names a face the app does not ship")
@@ -1388,6 +1402,7 @@ def generate():
     marked["system"] |= {path.lower() for path in COMPUTER_NAME}
     marked["system"] |= {path.lower() for path in WINE_MONO}
     marked["system"] |= {path.lower() for path in STEAM_REDIST_RUN}
+    marked["system"] |= {path.lower() for path in SHELL_FOLDERS}
     marked["system"].add(FONTS_KEY.lower())
     marked["system"] |= wic_marked
     marked["system"] |= winevulkan_marked
