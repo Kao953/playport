@@ -631,6 +631,7 @@ static int32_t client_ConnectToGlobalUser(iface *self, int32_t pipe) { (void)sel
 static void client_ReleaseUser(iface *self, int32_t pipe, int32_t user) { (void)self; (void)pipe; (void)user; }
 static void client_quiet(iface *self) { (void)self; }
 static uint8_t client_false(iface *self) { (void)self; return 0; }
+static uint8_t client_true(iface *self) { (void)self; return 1; }
 static uint32_t client_GetIPCCallCount(iface *self) { (void)self; return 0; }
 static void *client_get2(iface *self, int32_t pipe, const char *version) { (void)self; (void)pipe; return find(version, "GetISteamUtils"); }
 static void *client_get3(iface *self, int32_t user, int32_t pipe, const char *version)
@@ -957,6 +958,15 @@ static const struct { const char *family, *method; void *fn; } served[] = {
     { "ISteamFriends", "GetPersonaState", (void *)friends_GetPersonaState },
     { "ISteamFriends", "GetFriendCount", (void *)client_false },
     { "ISteamFriends", "GetFriendPersonaName", (void *)friends_GetFriendPersonaName },
+    /* Steam Input with no controller: Init succeeds (a game such as CHRONO TRIGGER quits on
+     * "SteamController()->Init failed"), every query answers none, and the game reads its pads
+     * through XInput (decision 0183). */
+    { "ISteamController", "Init", (void *)client_true },
+    { "ISteamController", "Shutdown", (void *)client_true },
+    { "ISteamController", "RunFrame", (void *)client_quiet },
+    { "ISteamInput", "Init", (void *)client_true },
+    { "ISteamInput", "Shutdown", (void *)client_true },
+    { "ISteamInput", "RunFrame", (void *)client_quiet },
 };
 
 /* Every version of the slot table, its class's vtable filled at the first CreateInterface (the
