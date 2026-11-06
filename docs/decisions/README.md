@@ -186,3 +186,4 @@ supersedes it.
 | [0185](0185-x86-emulator-options-in-release.md) | A game's page shows its x86 emulator options (memory ordering, block size, x87 precision, disk cache) in the release app too, and the release launch takes them (amends 0034) |
 | [0186](0186-a-games-steam-language.md) | A game's page has a Game language row (Steam API language codes, Default English) that a launch tells the game in client and emulator mode; installed depots stay English |
 | [0187](0187-the-phones-cjk-fonts-for-windows-ones.md) | On iOS, the phone's PingFang TC/SC, Hiragino Sans and Apple SD Gothic Neo stand in for the Windows CJK faces and are linked into the default GDI fallbacks (patches/wine-unix/0205) |
+| [0188](0188-i386-apcs-get-guest-addresses.md) | An i386 APC's arguments that are host addresses in the WoW64 window go back to the guest as guest addresses, not cut to 32 bits (ReadFileEx completions; patches/wine-pe/0065) |

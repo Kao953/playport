@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 16:51:53 +0800
+Subject: [PATCH] wow64: an i386 APC gets guest addresses, not host ones cut to
+ 32 bits
+
+Resident Evil HD REMASTER (304240) crashed a second after its first
+frame, in every Steam API mode: kernelbase's read_write_apc, the
+completion of its ReadFileEx, read [esi+4] with esi = 0xf4e8ff34.
+
+In Playport's WoW64 window a guest address is not its host address.
+iosb_32to64 hands the native NtReadFile the guest IO_STATUS_BLOCK as its
+host address in the window, and the completion APC gets that pointer as
+its second argument; Wow64ApcRoutine stored it into the 32-bit
+KiUserApcDispatcher frame truncated to 32 bits (host 0x72f4e8ff34 ->
+0xf4e8ff34) instead of the guest's 0x34e9ff34.
+
+An argument at or above 4 GiB is now turned back into the guest address
+(wow64_image_addr_to_guest: a host pointer outside the window is logged
+and becomes 0); a value below 4 GiB, as NtQueueApcThread's arguments
+are, goes through unchanged.
+
+Class: ios-port
+Evidence: docs/decisions/0188-i386-apcs-get-guest-addresses.md
+Offered-upstream: no
+---
+ dlls/wow64/syscall.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/wow64/syscall.c b/dlls/wow64/syscall.c
+index f0d6e173ed0..2e58eba1d9d 100644
+--- a/dlls/wow64/syscall.c
++++ b/dlls/wow64/syscall.c
+@@ -1504,8 +1504,13 @@ void WINAPI Wow64ApcRoutine( ULONG_PTR arg1, ULONG_PTR arg2, ULONG_PTR arg3, CON
+             stack = (struct apc_stack_layout32 *)wow64_to_host( ctx.Esp & ~3 ) - 1;
+             stack->func      = arg1 >> 32;
+             stack->arg1      = arg1;
+-            stack->arg2      = arg2;
+-            stack->arg3      = arg3;
++            /* An I/O completion's APC gets the IO_STATUS_BLOCK the guest passed, which
++             * iosb_32to64 hands the native call as its host address in the window: the guest
++             * gets its own address back, not the host one cut to 32 bits (ReadFileEx's
++             * completion read a wild pointer: Resident Evil HD REMASTER). A value below
++             * 4 GiB is a guest value already (NtQueueApcThread's arguments). */
++            stack->arg2      = wow64_image_addr_to_guest( (void *)arg2 );
++            stack->arg3      = wow64_image_addr_to_guest( (void *)arg3 );
+             stack->alertable = TRUE;
+             stack->context   = ctx;
+             stack->xctx.Legacy.Offset = -(LONG)sizeof(stack->context);

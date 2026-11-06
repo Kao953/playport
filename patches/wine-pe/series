@@ -61,3 +61,4 @@
 0062-ntdll-log-the-first-256-of-the-remaining-exceptions-.patch
 0063-ntdll-kernel32-kernelbase-native-code-reads-KUSER_SH.patch
 0064-winmm-the-joystick-API-reads-the-host-s-pads-as-xinp.patch
+0065-wow64-an-i386-APC-gets-guest-addresses-not-host-ones.patch
