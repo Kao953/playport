@@ -23,6 +23,17 @@ public enum JitPool {
     /// (0x140000000-0x15c000000) at every slide seen; 896 MiB keeps it only at the
     /// lowest slides, and a launch that loses it logs `executable window: not held`.
     public static let maximumMB = 896
+    /// The largest pool above which the reservation keeps the executable window at every slide
+    /// seen: a game whose executable must load in it gets no more (FixedBaseExecutable, decision 0191).
+    public static let windowKeepingMB = 768
+
+    /// The game's pool for an executable that must load in the executable window: capped at
+    /// `windowKeepingMB`, with why; unchanged for any other.
+    public static func forFixedBase(gameMB: Int?, imageBase: UInt64?) -> (mb: Int?, note: String?) {
+        guard let imageBase, let gameMB, gameMB > windowKeepingMB else { return (gameMB, nil) }
+        return (windowKeepingMB, "the game's \(gameMB) MiB capped at \(windowKeepingMB) MiB: its executable must load at "
+                + "0x\(String(imageBase, radix: 16)), in the executable window")
+    }
     /// What every Play gets: the high-water marks measured (The Witcher 3: head
     /// 206 MiB, tail 145 MiB; Kingdom Come: Deliverance: head 182, tail 161) with
     /// FEX's 128 MiB code buffer still granted (docs/evidence/2026-09-28-jit-pool.md,

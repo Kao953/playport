@@ -448,6 +448,11 @@ final class LibraryModel: ObservableObject {
         let galaxy = t.store == .gog ? await GOGAccount.shared.galaxyListener(t.key.id, name: t.name) : nil
         // FEX's disk cache stays under its budget (decision 0056): cleared before this launch when over it.
         await Task.detached(priority: .userInitiated) { EmulatorCache.keepWithinBudget { Self.log($0) } }.value
+        // An x86-64 executable that must load in the executable window keeps it: no pool over 768 MiB (decision 0191).
+        let exeFile = WineHostRuntime.shared.prefixURL.appendingPathComponent("drive_c", isDirectory: true)
+            .appendingPathComponent(Self.driveCRelative(plan.exe))
+        let fixedBase = JitPool.forFixedBase(gameMB: settings.jitPoolMB, imageBase: FixedBaseExecutable.imageBase(file: exeFile))
+        if let note = fixedBase.note { Self.log("play \(t.name): \(note)") }
         let fex = FEXProfile.launch(appID: t.appID, exe: plan.exe, ordering: settings.ordering, maxInst: settings.maxInst,
                                     x87Reduced: settings.x87Reduced, diskCache: settings.diskCache)
         guard TitleLaunch.shared.start(title: t.name, titleID: t.id, exe: plan.exe, args: plan.args + settings.arguments + epicArgs,
@@ -458,7 +463,7 @@ final class LibraryModel: ObservableObject {
                                        memory: MemoryNeed.of(t, cohort: Self.cohort), epic: epic, galaxy: galaxy,
                                        prerequisites: prerequisites, windowsServices: settings.windowsServices,
                                        khronosVulkanLoader: settings.khronosVulkanLoader,
-                                       jitPoolMB: settings.jitPoolMB,
+                                       jitPoolMB: fixedBase.mb,
                                        // The launcher it starts ends at the game's sign-in (decision 0130).
                                        endLauncher: settings.endLauncherAfterSignIn
                                            ? PublisherLauncher.startedBy(game: t.id)?.signIn : nil,
@@ -956,5 +961,15 @@ final class LibraryModel: ObservableObject {
     var totalBytes: UInt64? {
         let v = try? Self.home.resourceValues(forKeys: [.volumeTotalCapacityKey])
         return v?.volumeTotalCapacity.map { UInt64(max(0, $0)) }
+    }
+}
+
+extension LibraryModel {
+    /// A launch plan's executable (`Games\\X\\game.exe`, or `C:\\…`) as a path under drive_c.
+    static func driveCRelative(_ exe: String) -> String {
+        var p = exe.replacingOccurrences(of: "\\", with: "/")
+        if p.count >= 2, p.dropFirst().first == ":" { p = String(p.dropFirst(2)) }
+        while p.hasPrefix("/") { p.removeFirst() }
+        return p
     }
 }
