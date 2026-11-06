@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Fri, 6 Nov 2026 13:45:57 +0800
+Subject: [PATCH] winmm: the joystick API reads the host's pads, as xinput does
+
+A game that reads its pads through winmm (joyGetNumDevs, joyGetDevCaps,
+joyGetPosEx) found none on the phone: Wine's winmm finds joysticks through
+DirectInput, which sees no HID device in this process. CHRONO TRIGGER
+(613830) reads its controller this way only; it ran on the keyboard.
+
+joyGetDevCapsW and joyGetPosEx now ask the host slot first, through the
+same NtUserCallTwoParam_GetGamepadState xinput uses (wine-port 0055): an
+XInput pad in host slot 0-3 is joystick 0-3, laid out as Windows' own
+driver gives an Xbox 360 controller to winmm (X/Y left stick, Z triggers,
+R/U right stick Y/X, buttons A B X Y LB RB Back Start LS RS as 1-10,
+D-pad as a four-way POV). With no host pad in a slot, the DirectInput path
+answers as before; off iOS no slot is ever connected.
+
+Class: host-app
+Evidence: docs/decisions/0184-winmm-joysticks-read-the-hosts-pads.md
+Offered-upstream: no
+---
+ dlls/winmm/Makefile.in |  2 +-
+ dlls/winmm/joystick.c  | 93 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 94 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/winmm/Makefile.in b/dlls/winmm/Makefile.in
+index 32d7f5d5c0b..d12148736a3 100644
+--- a/dlls/winmm/Makefile.in
++++ b/dlls/winmm/Makefile.in
+@@ -1,7 +1,7 @@
+ EXTRADEFS = -D_WINMM_
+ MODULE    = winmm.dll
+ IMPORTLIB = winmm
+-IMPORTS   = uuid user32 advapi32 ole32 msacm32
++IMPORTS   = uuid user32 advapi32 ole32 msacm32 win32u
+ DELAYIMPORTS = dinput8
+ 
+ SOURCES = \
+diff --git a/dlls/winmm/joystick.c b/dlls/winmm/joystick.c
+index ed839dcc852..109e87bb38d 100644
+--- a/dlls/winmm/joystick.c
++++ b/dlls/winmm/joystick.c
+@@ -39,6 +39,10 @@
+ 
+ #include "winemm.h"
+ 
++/* The host's pads (Playport/iOS): NtUserCallTwoParam_GetGamepadState, as xinput reads them. */
++#include "xinput.h"
++#include "ntuser.h"
++
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(winmm);
+@@ -94,6 +98,81 @@ static DIDEVICEINSTANCEW instances[16];
+ static struct joystick joysticks[16];
+ static IDirectInput8W *dinput;
+ 
++/* The host's pads (Playport/iOS): an XInput pad in host slot `id` (0-3) is joystick `id`, with
++ * the axes, buttons and POV Windows' own driver gives an Xbox controller through winmm:
++ * X/Y the left stick, Z the triggers (LT up, RT down), R/U the right stick's Y/X, buttons
++ * A B X Y LB RB Back Start LS RS as 1-10, the D-pad as a four-way POV. Elsewhere no slot is
++ * connected and the DirectInput path below answers. */
++#define HOST_PADS 4
++
++static BOOL host_pad( UINT id, XINPUT_STATE *state )
++{
++    if (id >= HOST_PADS) return FALSE;
++    memset( state, 0, sizeof(*state) );
++    return NtUserGetGamepadState( id, NtUserGamepadOp_State, state );
++}
++
++static DWORD host_stick( SHORT v, BOOL flip )
++{
++    LONG p = flip ? 32767 - v : v + 32768;
++    return p < 0 ? 0 : p > 0xffff ? 0xffff : p;
++}
++
++static void host_pad_info( const XINPUT_GAMEPAD *pad, JOYINFOEX *info )
++{
++    static const WORD buttons[] =
++    {
++        XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
++        XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_BACK,
++        XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_LEFT_THUMB, XINPUT_GAMEPAD_RIGHT_THUMB,
++    };
++    WORD b = pad->wButtons;
++    LONG z = 32767 + (pad->bLeftTrigger - pad->bRightTrigger) * 128;
++    BOOL up = b & XINPUT_GAMEPAD_DPAD_UP, down = b & XINPUT_GAMEPAD_DPAD_DOWN;
++    BOOL left = b & XINPUT_GAMEPAD_DPAD_LEFT, right = b & XINPUT_GAMEPAD_DPAD_RIGHT;
++    DWORD pov = 0xffff, i;
++
++    if (up && down) up = down = FALSE;
++    if (left && right) left = right = FALSE;
++    if (up) pov = right ? 4500 : left ? 31500 : 0;
++    else if (down) pov = right ? 13500 : left ? 22500 : 18000;
++    else if (right) pov = 9000;
++    else if (left) pov = 27000;
++
++    if (info->dwFlags & JOY_RETURNX) info->dwXpos = host_stick( pad->sThumbLX, FALSE );
++    if (info->dwFlags & JOY_RETURNY) info->dwYpos = host_stick( pad->sThumbLY, TRUE );
++    if (info->dwFlags & JOY_RETURNZ) info->dwZpos = z < 0 ? 0 : z > 0xffff ? 0xffff : z;
++    if (info->dwFlags & JOY_RETURNR) info->dwRpos = host_stick( pad->sThumbRY, TRUE );
++    if (info->dwFlags & JOY_RETURNU) info->dwUpos = host_stick( pad->sThumbRX, FALSE );
++    if (info->dwFlags & JOY_RETURNV) info->dwVpos = 0;
++    if (info->dwFlags & JOY_RETURNPOV) info->dwPOV = pov;
++    if (info->dwFlags & JOY_RETURNBUTTONS)
++    {
++        info->dwButtonNumber = info->dwButtons = 0;
++        for (i = 0; i < ARRAY_SIZE(buttons); i++)
++        {
++            if (!(b & buttons[i])) continue;
++            info->dwButtonNumber++;
++            info->dwButtons |= 1 << i;
++        }
++    }
++}
++
++static void host_pad_caps( JOYCAPSW *caps )
++{
++    caps->wMid = 0x045e;   /* an Xbox 360 controller's */
++    caps->wPid = 0x028e;
++    wcscpy( caps->szPname, L"Wine joystick driver" );
++    caps->wXmax = caps->wYmax = caps->wZmax = caps->wRmax = caps->wUmax = 0xffff;
++    caps->wNumButtons = 10;
++    caps->wPeriodMin = JOY_PERIOD_MIN;
++    caps->wPeriodMax = JOY_PERIOD_MAX;
++    caps->wCaps = JOYCAPS_HASZ | JOYCAPS_HASR | JOYCAPS_HASU | JOYCAPS_HASPOV | JOYCAPS_POV4DIR;
++    caps->wMaxAxes = AXIS_COUNT;
++    caps->wNumAxes = 5;
++    caps->wMaxButtons = BUTTON_COUNT;
++}
++
+ static BOOL CALLBACK enum_instances( const DIDEVICEINSTANCEW *instance, void *context )
+ {
+     ULONG index = *(ULONG *)context;
+@@ -432,6 +511,7 @@ MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetDevCapsW( UINT_PTR id, JOYCAPSW *caps, U
+     MMRESULT res = JOYERR_NOERROR;
+     IDirectInputDevice8W *device;
+     ULONG ticks = GetTickCount();
++    XINPUT_STATE host;
+     HRESULT hr;
+ 
+     TRACE( "id %d, caps %p, size %u.\n", (int)id, caps, size );
+@@ -445,6 +525,12 @@ MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetDevCapsW( UINT_PTR id, JOYCAPSW *caps, U
+ 
+     if (id >= ARRAY_SIZE(joysticks)) return JOYERR_PARMS;
+ 
++    if (host_pad( id, &host ))
++    {
++        host_pad_caps( caps );
++        return JOYERR_NOERROR;
++    }
++
+     EnterCriticalSection( &joystick_cs );
+ 
+     if (!(device = joysticks[id].device) && (ticks - last_check) >= 2000)
+@@ -574,6 +660,7 @@ MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetPosEx( UINT id, JOYINFOEX *info )
+     MMRESULT res = JOYERR_NOERROR;
+     IDirectInputDevice8W *device;
+     struct joystick_state state;
++    XINPUT_STATE host;
+     HRESULT hr;
+ 
+     TRACE( "id %u, info %p.\n", id, info );
+@@ -581,6 +668,12 @@ MMRESULT WINAPI DECLSPEC_HOTPATCH joyGetPosEx( UINT id, JOYINFOEX *info )
+     if (!info) return MMSYSERR_INVALPARAM;
+     if (id >= ARRAY_SIZE(joysticks) || info->dwSize < sizeof(JOYINFOEX)) return JOYERR_PARMS;
+ 
++    if (host_pad( id, &host ))
++    {
++        host_pad_info( &host.Gamepad, info );
++        return JOYERR_NOERROR;
++    }
++
+     EnterCriticalSection( &joystick_cs );
+ 
+     if (!(device = joysticks[id].device) && (ticks - last_find_ticks) >= 2000)

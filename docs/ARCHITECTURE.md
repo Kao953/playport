@@ -931,6 +931,9 @@ them to UIKit, GameController and AVFAudio.
   takes XInput pads only as raw input HID devices, and while it is on SDL's XInput driver
   loads no XInput; SDL reads the variable over a game's own hint). DirectInput and SDL's HIDAPI
   driver find no pad either and need nothing ([WoW's controller](evidence/2026-11-01-wow-controller.md)).
+- **winmm's joystick API** (`joyGetPosEx`, `joyGetDevCaps`) reads the same host slots first
+  (`patches/wine-pe/0064`, [decision 0184](decisions/0184-winmm-joysticks-read-the-hosts-pads.md)),
+  laid out as Windows gives an Xbox 360 controller to winmm.
 - **Lifecycle** (`HostIOKit/Lifecycle.swift`):
   - focus loss goes to Wine first, while held keys are still down, then every
     held key, mouse button and pad control is released, so a game never keeps
