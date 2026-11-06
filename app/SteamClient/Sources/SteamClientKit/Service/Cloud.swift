@@ -236,10 +236,79 @@ public enum Cloud {
         public var time: UInt64
     }
 
-    /// What the last sync left: Steam's change number and every file's SHA-1.
+    /// What the last sync left: Steam's change number, every file's SHA-1 and
+    /// the user folders it mapped (none before they existed).
     public struct Baseline: Sendable, Equatable, Codable {
         public var changeNumber: UInt64
         public var files: [String: String]
+        public var aliases: [UserAlias]?
+    }
+
+    // MARK: a save folder named after the Windows user
+
+    /// A game that names a save folder after the Windows user: Bunny Garden keeps
+    /// `Save/<user>/…` in its install, so a PC's saves are `Save/jk/…` on Steam and
+    /// the phone's game, whose user is `playport`, looks in `Save/playport/…`.
+    /// Steam's names stay as they are (the PC reads them); on the phone a name
+    /// under `prefix + steam/` is the file under `prefix + phone/`.
+    public struct UserAlias: Sendable, Equatable, Codable {
+        /// The rule's folder as Steam names it, with its root token: `%GameInstall%Save/`.
+        public var prefix: String
+        /// The PC's user folder in Steam's names (`jk`).
+        public var steam: String
+        /// The phone's, as it is on disk (`playport`).
+        public var phone: String
+    }
+
+    /// The user folders to map: for each rule with a root token, when every Steam
+    /// file under its folder sits in one subfolder that is not the phone's user's,
+    /// and the game has made a folder named after the phone's user beside it. A
+    /// folder of that name is taken as the user's; without it nothing is mapped,
+    /// and a game that names folders otherwise is left alone.
+    public static func userAliases(rules: [SaveRule], roots: Roots, remote: [String], steamID: UInt64) -> [UserAlias] {
+        let user = roots.user.lastPathComponent
+        var out: [UserAlias] = []
+        for r in rules where !r.root.isEmpty {
+            guard let base = roots.folder(r.root) else { continue }
+            let rel = substitute(r.path, steamID: steamID)
+                .split(whereSeparator: { $0 == "/" || $0 == "\\" }).map(String.init).filter { $0 != "." }
+            guard !rel.contains("..") else { continue }
+            let prefix = "%\(canonicalRoot(r.root))%" + rel.map { $0 + "/" }.joined()
+            guard !out.contains(where: { $0.prefix.lowercased() == prefix.lowercased() }) else { continue }
+            let firsts = remote.compactMap { name -> String? in
+                guard name.lowercased().hasPrefix(prefix.lowercased()) else { return nil }
+                let parts = name.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: true)
+                return parts.count >= 2 ? String(parts[0]) : nil
+            }
+            guard let steam = firsts.first, firsts.allSatisfy({ $0.lowercased() == steam.lowercased() }),
+                  steam.lowercased() != user.lowercased() else { continue }
+            let dir = resolve(rel + [user], in: base)
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            out.append(UserAlias(prefix: prefix, steam: steam, phone: dir.lastPathComponent))
+        }
+        return out
+    }
+
+    /// Steam's name for a file on the phone: `prefix + phone/…` becomes `prefix + steam/…`.
+    /// nil for a file under `prefix + steam/` on the phone: an earlier copy the game never
+    /// reads, which must not stand for Steam's file.
+    public static func steamName(_ local: String, _ aliases: [UserAlias]) -> String? {
+        for a in aliases {
+            let phone = a.prefix + a.phone + "/", steam = a.prefix + a.steam + "/"
+            if local.lowercased().hasPrefix(phone.lowercased()) { return steam + local.dropFirst(phone.count) }
+            if local.lowercased().hasPrefix(steam.lowercased()) { return nil }
+        }
+        return local
+    }
+
+    /// The phone's name for a Steam file: `prefix + steam/…` becomes `prefix + phone/…`.
+    public static func phoneName(_ name: String, _ aliases: [UserAlias]) -> String {
+        for a in aliases {
+            let steam = a.prefix + a.steam + "/"
+            if name.lowercased().hasPrefix(steam.lowercased()) { return a.prefix + a.phone + "/" + name.dropFirst(steam.count) }
+        }
+        return name
     }
 
     public enum Action: String, Sendable, Equatable, Codable {

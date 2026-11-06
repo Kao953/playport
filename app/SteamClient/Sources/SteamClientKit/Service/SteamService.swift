@@ -816,18 +816,40 @@ public actor SteamService {
         let changes = try await backend.cloudChangelist(appID: appID)
         let remote = changes.remote
         let kept = loadCloud(appID)
-        let baseline = kept?.accountTag == account ? kept?.baseline : nil
+        var baseline = kept?.accountTag == account ? kept?.baseline : nil
+        // A save folder named after the PC's Windows user is the phone's user's (Cloud.UserAlias).
+        let aliases = Cloud.userAliases(rules: rules, roots: roots, remote: remote.keys.sorted(), steamID: stored.steamID)
+        // A folder mapped for the first time: what the last sync recorded under it was the
+        // PC's folder on the phone, which the game never read. Its files start over as a
+        // first sync's: a save on both sides that differs is the player's to settle.
+        let fresh = aliases.filter { !(baseline?.aliases ?? []).contains($0) }
+        if !fresh.isEmpty, var b = baseline {
+            b.files = b.files.filter { name, _ in !fresh.contains { name.lowercased().hasPrefix(($0.prefix + $0.steam + "/").lowercased()) } }
+            baseline = b
+        }
+        for a in aliases {
+            log.info("cloud", "app \(appID): \(a.prefix)\(a.steam)/ on Steam is \(a.prefix)\(a.phone)/ on the phone (the Windows user's folder)"
+                     + (fresh.contains(a) ? ", mapped from this sync" : ""))
+        }
         // Each local file under the name Steam has for it, else the last sync's (Cloud.named).
-        var files = Cloud.named(Cloud.localFiles(rules: rules, roots: roots, steamID: stored.steamID),
-                                like: remote.keys.sorted() + (baseline?.files.keys.sorted() ?? []))
+        var found: [String: URL] = [:]
+        for (name, url) in Cloud.localFiles(rules: rules, roots: roots, steamID: stored.steamID) {
+            if let steam = Cloud.steamName(name, aliases) { found[steam] = url }
+        }
+        var files = Cloud.named(found, like: remote.keys.sorted() + (baseline?.files.keys.sorted() ?? []))
         for name in remote.keys where files[name] == nil {
-            if let url = roots.file(name), FileManager.default.fileExists(atPath: url.path) { files[name] = url }
+            if let url = roots.file(Cloud.phoneName(name, aliases)), FileManager.default.fileExists(atPath: url.path) { files[name] = url }
         }
         var local: [String: String] = [:]
         for (name, url) in files { if let d = try? Data(contentsOf: url) { local[name] = SHA1.hash([UInt8](d)).hex } }
         var plan = Cloud.plan(remote: remote, local: local, baseline: baseline)
         // A game's first sync does not upload a file Steam lacks: the player says.
         if baseline == nil { for name in local.keys where remote[name] == nil { plan[name] = .conflict } }
+        for a in fresh {
+            for name in local.keys where remote[name] == nil && name.lowercased().hasPrefix((a.prefix + a.steam + "/").lowercased()) {
+                plan[name] = .conflict
+            }
+        }
         // A conflict stays one until the player settles it, even once a baseline exists.
         let open = kept?.accountTag == account ? Set(kept!.conflicts.map(\.name)) : []
         for name in open where plan[name] != nil { plan[name] = .conflict }
@@ -845,7 +867,7 @@ public actor SteamService {
         var downloaded: [String] = [], uploaded: [String] = [], failed: [String: String] = [:]
         for name in plan.filter({ $0.value == .download }).keys.sorted() {
             do {
-                guard let url = files[name] ?? roots.file(name) else { throw SteamError.unsupported("no local root for \(name)") }
+                guard let url = files[name] ?? roots.file(Cloud.phoneName(name, aliases)) else { throw SteamError.unsupported("no local root for \(name)") }
                 let data = try await backend.cloudDownload(appID: appID, name: name)
                 if let old = try? Data(contentsOf: url) { try backup(name, old) }
                 try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -888,18 +910,19 @@ public actor SteamService {
                                  steamTime: remote[name].map { Date(timeIntervalSince1970: TimeInterval($0.time)) })
         }
         let at = now()
-        saveCloud(appID, CloudRecord(accountTag: account, baseline: Cloud.Baseline(changeNumber: changes.currentChangeNumber, files: next),
+        saveCloud(appID, CloudRecord(accountTag: account, baseline: Cloud.Baseline(changeNumber: changes.currentChangeNumber, files: next,
+                                                                          aliases: aliases.isEmpty ? nil : aliases),
                                      conflicts: conflicts, at: at))
         log.info("cloud", "app \(appID): \(remote.count) on Steam, \(local.count) on the phone; \(downloaded.count) down, "
                  + "\(uploaded.count) up, \(conflicts.count) conflict(s)" + (failed.isEmpty ? "" : ", \(failed.count) failed"))
-        logCloudDetail(appID: appID, steamID: stored.steamID, rules: rules, roots: roots, remote: remote, local: local, files: files, plan: plan, failed: failed)
+        logCloudDetail(appID: appID, steamID: stored.steamID, aliases: aliases, rules: rules, roots: roots, remote: remote, local: local, files: files, plan: plan, failed: failed)
         return CloudSync(downloaded: downloaded, uploaded: uploaded, conflicts: conflicts, failed: failed, at: at)
     }
 
     /// What a sync saw, for a report: the game's save rules, each cloud file and
     /// where it is on the phone, and the files the game wrote most recently under
     /// the user folder and the install, which show where it really saves.
-    private func logCloudDetail(appID: UInt32, steamID: UInt64, rules: [Cloud.SaveRule], roots: Cloud.Roots, remote: [String: Cloud.Remote],
+    private func logCloudDetail(appID: UInt32, steamID: UInt64, aliases: [Cloud.UserAlias], rules: [Cloud.SaveRule], roots: Cloud.Roots, remote: [String: Cloud.Remote],
                                 local: [String: String], files: [String: URL], plan: [String: Cloud.Action], failed: [String: String]) {
         if rules.isEmpty {
             log.info("cloud", "app \(appID): no ufs save rules: only files the game writes through the Steam API (the emulator's remote folder)")
@@ -916,7 +939,7 @@ public actor SteamService {
             for f in all { log.info("cloud", "app \(appID):   \(f.time.formatted(.iso8601)) \(f.size) B \(Cloud.shown(f.url, roots))") }
         }
         for name in Set(remote.keys).union(local.keys).sorted() {
-            let at = (files[name] ?? roots.file(name)).map { Cloud.shown($0, roots) } ?? "no local root"
+            let at = (files[name] ?? roots.file(Cloud.phoneName(name, aliases))).map { Cloud.shown($0, roots) } ?? "no local root"
             let phone = local[name] == nil ? "none" : local[name] == remote[name]?.sha ? "same" : "differs"
             let steam = remote[name].map { "\($0.size) B, " + Date(timeIntervalSince1970: TimeInterval($0.time)).formatted(.iso8601) } ?? "none"
             log.info("cloud", "app \(appID): file \(name): Steam \(steam); phone \(phone) at \(at); \(plan[name]?.rawValue ?? "nothing to do")"

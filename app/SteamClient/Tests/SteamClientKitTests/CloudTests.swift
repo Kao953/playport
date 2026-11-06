@@ -41,6 +41,23 @@ func portal2CloudApp() throws -> KeyValue {
     """.utf8))
 }
 
+/// Bunny Garden's rule: its saves are `Save/<Windows user>/…` in the install, no dot in their names.
+func bunnyGardenCloudApp() throws -> KeyValue {
+    try KeyValue.parseText(Array("""
+    "2654470"
+    {
+        "common" { "name" "Bunny" }
+        "ufs"
+        {
+            "savefiles"
+            {
+                "0" { "root" "gameinstall" "path" "Save" "pattern" "*.*" "recursive" "1" }
+            }
+        }
+    }
+    """.utf8))
+}
+
 final class CloudTests: XCTestCase {
     var dir: URL!
     var roots: Cloud.Roots!
@@ -167,6 +184,21 @@ final class CloudTests: XCTestCase {
         XCTAssertFalse(Cloud.glob("save.*", "other"))
     }
 
+    func testUserAliasesNeedTheGamesOwnUserFolder() throws {
+        let rules = Cloud.rules(try bunnyGardenCloudApp())
+        let remote = ["%GameInstall%Save/jk/a/UserData", "%GameInstall%Save/jk/b/UserData"]
+        XCTAssertEqual(Cloud.userAliases(rules: rules, roots: roots, remote: remote, steamID: 1), [], "no playport folder yet")
+        try FileManager.default.createDirectory(at: roots.gameInstall.appendingPathComponent("Save/playport"), withIntermediateDirectories: true)
+        let a = Cloud.userAliases(rules: rules, roots: roots, remote: remote, steamID: 1)
+        XCTAssertEqual(a, [Cloud.UserAlias(prefix: "%GameInstall%Save/", steam: "jk", phone: "playport")])
+        XCTAssertEqual(Cloud.phoneName(remote[0], a), "%GameInstall%Save/playport/a/UserData")
+        XCTAssertEqual(Cloud.steamName("%GameInstall%Save/playport/a/UserData", a), remote[0])
+        XCTAssertNil(Cloud.steamName(remote[0], a), "the PC's folder on the phone is not Steam's file")
+        XCTAssertEqual(Cloud.userAliases(rules: rules, roots: roots, remote: remote + ["%GameInstall%Save/other/x"], steamID: 1), [],
+                       "files in two folders: not a user folder")
+        XCTAssertEqual(Cloud.userAliases(rules: rules, roots: roots, remote: ["%GameInstall%Save/top.dat"], steamID: 1), [])
+    }
+
     func testUnityPlayerPrefsInTheRegistry() {
         let reg = """
         WINE REGISTRY Version 2
@@ -212,6 +244,53 @@ final class CloudServiceTests: XCTestCase {
     }
 
     func text(_ url: URL) -> String? { (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) } }
+
+    /// Bunny Garden on a PC whose user is jk: Steam has `Save/jk/…`, the phone's game reads
+    /// `Save/playport/…`. The first sync puts the PC's saves in `Save/jk`, where the game never
+    /// looks; once the game has made `Save/playport`, the two differ and the player settles it,
+    /// Steam's copy goes to `Save/playport`, and the phone's plays go up under Steam's names.
+    func testASaveFolderNamedAfterThePCsUserIsThePhones() async throws {
+        let slot = "%GameInstall%Save/jk/user/save/0000000000000001/0/UserData"
+        let b = FakeBackend()
+        await b.set(cloud: [slot: Array("pc progress".utf8)])
+        await b.set(library: [2654470], [2654470: try bunnyGardenCloudApp()])
+        await b.set(stored: FakeBackend.session(exp: 2_000_000_000))
+        let s = SteamService(backend: b, log: .silent, stateDirectory: dir.appendingPathComponent("state"))
+        _ = await s.restoreIfPossible()
+        let game = dir.appendingPathComponent("Games/BUNNY GARDEN")
+        let bunny = Cloud.Roots(user: dir.appendingPathComponent("users/playport"), gameInstall: game,
+                                remote: dir.appendingPathComponent("GSE Saves/2654470/remote"))
+        let pcCopy = game.appendingPathComponent("Save/jk/user/save/0000000000000001/0/UserData")
+        let phoneSave = game.appendingPathComponent("Save/playport/user/save/0000000000000001/0/UserData")
+
+        // Before the game has run there is no playport folder: nothing is mapped.
+        let first = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups)
+        XCTAssertEqual(first.downloaded, [slot])
+        XCTAssertEqual(text(pcCopy), "pc progress")
+
+        // The game starts a new save in its own user's folder.
+        try FileManager.default.createDirectory(at: phoneSave.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("new game".utf8).write(to: phoneSave)
+        let second = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups)
+        XCTAssertEqual(second.uploaded, [], "the phone's new game must not replace the PC's progress")
+        XCTAssertEqual(second.conflicts.map(\.name), [slot])
+
+        let settled = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups,
+                                            resolve: SteamService.resolveAll(second.conflicts, .steam))
+        XCTAssertEqual(settled.downloaded, [slot])
+        XCTAssertEqual(text(phoneSave), "pc progress", "Steam's save is where the phone's game reads it")
+        XCTAssertEqual(TitleInstaller.regularFiles(under: backups).count, 1, "the new game is backed up")
+
+        // A play goes up under Steam's name, so the PC keeps reading it.
+        try Data("played on the phone".utf8).write(to: phoneSave)
+        let third = try await s.syncCloud(appID: 2654470, roots: bunny, backups: backups)
+        XCTAssertEqual(third.uploaded, [slot])
+        let onSteam = await b.cloudFile(slot)
+        XCTAssertEqual(onSteam, Array("played on the phone".utf8))
+        let names = await b.cloudNames()
+        XCTAssertFalse(names.contains { $0.contains("playport") }, "no phone-only names on Steam")
+    }
+
 
     func testAFreshPhoneGetsSteamsSaveAndThenSendsItsPlays() async throws {
         let b = FakeBackend()
