@@ -159,6 +159,14 @@ final class CloudTests: XCTestCase {
         XCTAssertEqual(Cloud.userRegistry(real).standardizedFileURL, prefix.appendingPathComponent("user.reg").standardizedFileURL)
     }
 
+    func testAStarDotStarRuleTakesNamesWithoutADot() {
+        XCTAssertTrue(Cloud.glob("*.*", "UserData"), "Bunny Garden's saves, as Steam stores them")
+        XCTAssertTrue(Cloud.glob("*.*", "user1.dat"))
+        XCTAssertTrue(Cloud.glob("user*.*", "user1"))
+        XCTAssertFalse(Cloud.glob("*.dat", "UserData"))
+        XCTAssertFalse(Cloud.glob("save.*", "other"))
+    }
+
     func testUnityPlayerPrefsInTheRegistry() {
         let reg = """
         WINE REGISTRY Version 2

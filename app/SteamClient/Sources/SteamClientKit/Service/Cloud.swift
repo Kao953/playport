@@ -202,8 +202,15 @@ public enum Cloud {
             .replacingOccurrences(of: "{Steam3AccountID}", with: String(steamID & 0xFFFF_FFFF))
     }
 
-    /// `*` and `?` against a file name, without case.
+    /// `*` and `?` against a file name, without case. A pattern ending in `.*`
+    /// also takes a name with no dot, as Windows does: Steam stores Bunny
+    /// Garden's `UserData` under its `*.*` rule.
     static func glob(_ pattern: String, _ name: String) -> Bool {
+        if pattern.hasSuffix(".*"), !name.contains("."), globExact(String(pattern.dropLast(2)), name) { return true }
+        return globExact(pattern, name)
+    }
+
+    private static func globExact(_ pattern: String, _ name: String) -> Bool {
         let p = Array(pattern.lowercased()), n = Array(name.lowercased())
         var memo = [[Bool?]](repeating: [Bool?](repeating: nil, count: n.count + 1), count: p.count + 1)
         func m(_ i: Int, _ j: Int) -> Bool {

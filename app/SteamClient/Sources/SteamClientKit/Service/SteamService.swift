@@ -892,14 +892,14 @@ public actor SteamService {
                                      conflicts: conflicts, at: at))
         log.info("cloud", "app \(appID): \(remote.count) on Steam, \(local.count) on the phone; \(downloaded.count) down, "
                  + "\(uploaded.count) up, \(conflicts.count) conflict(s)" + (failed.isEmpty ? "" : ", \(failed.count) failed"))
-        logCloudDetail(appID: appID, rules: rules, roots: roots, remote: remote, local: local, files: files, plan: plan, failed: failed)
+        logCloudDetail(appID: appID, steamID: stored.steamID, rules: rules, roots: roots, remote: remote, local: local, files: files, plan: plan, failed: failed)
         return CloudSync(downloaded: downloaded, uploaded: uploaded, conflicts: conflicts, failed: failed, at: at)
     }
 
     /// What a sync saw, for a report: the game's save rules, each cloud file and
     /// where it is on the phone, and the files the game wrote most recently under
     /// the user folder and the install, which show where it really saves.
-    private func logCloudDetail(appID: UInt32, rules: [Cloud.SaveRule], roots: Cloud.Roots, remote: [String: Cloud.Remote],
+    private func logCloudDetail(appID: UInt32, steamID: UInt64, rules: [Cloud.SaveRule], roots: Cloud.Roots, remote: [String: Cloud.Remote],
                                 local: [String: String], files: [String: URL], plan: [String: Cloud.Action], failed: [String: String]) {
         if rules.isEmpty {
             log.info("cloud", "app \(appID): no ufs save rules: only files the game writes through the Steam API (the emulator's remote folder)")
@@ -907,6 +907,13 @@ public actor SteamService {
         for r in rules {
             log.info("cloud", "app \(appID): rule root=\(r.root.isEmpty ? "-" : r.root) path=\(r.path.isEmpty ? "-" : r.path) "
                      + "pattern=\(r.pattern)\(r.recursive ? " recursive" : "")\(roots.folder(r.root) == nil ? " (root not mapped)" : "")")
+            // Every file in the rule's folder, matched or not, newest first: a save the
+            // rule misses (another name, another subfolder) shows here.
+            guard let base = roots.folder(r.root) else { continue }
+            let dir = r.path.isEmpty ? base : Cloud.resolve(Cloud.substitute(r.path, steamID: steamID).split(whereSeparator: { $0 == "/" || $0 == "\\" }).map(String.init), in: base)
+            let all = Cloud.recentFiles(under: dir, since: .distantPast, limit: 20, skip: [])
+            log.info("cloud", "app \(appID): rule folder \(Cloud.shown(dir, roots)): \(all.isEmpty ? "empty or missing" : "\(all.count) newest")")
+            for f in all { log.info("cloud", "app \(appID):   \(f.time.formatted(.iso8601)) \(f.size) B \(Cloud.shown(f.url, roots))") }
         }
         for name in Set(remote.keys).union(local.keys).sorted() {
             let at = (files[name] ?? roots.file(name)).map { Cloud.shown($0, roots) } ?? "no local root"

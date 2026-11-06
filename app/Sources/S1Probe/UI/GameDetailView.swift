@@ -1556,14 +1556,41 @@ enum ProblemReport {
         urls += ((try? fm.contentsOfDirectory(at: driveC, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "log" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        urls += unityLogs(under: driveC.appendingPathComponent("users/playport/AppData/LocalLow", isDirectory: true))
         return urls.filter { fm.fileExists(atPath: $0.path) }
+    }
+
+    /// Unity games' own logs, `LocalLow/<company>/<product>/Player.log` and
+    /// `Player-prev.log`, written in the last three days: what the game says about
+    /// its files and saves, which playport.log cannot.
+    static func unityLogs(under localLow: URL) -> [URL] {
+        let fm = FileManager.default
+        let since = Date().addingTimeInterval(-3 * 24 * 3600)
+        var out: [URL] = []
+        for company in (try? fm.contentsOfDirectory(at: localLow, includingPropertiesForKeys: nil)) ?? [] {
+            for product in (try? fm.contentsOfDirectory(at: company, includingPropertiesForKeys: nil)) ?? [] {
+                for name in ["Player.log", "Player-prev.log"] {
+                    let u = product.appendingPathComponent(name)
+                    if let t = (try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date, t >= since { out.append(u) }
+                }
+            }
+        }
+        return out.sorted { $0.path < $1.path }
+    }
+
+    /// A file's name in the report: a Unity log takes its company and product
+    /// (`unity-Qureate-BUNNY GARDEN-Player.log`), since every game's is Player.log.
+    static func reportName(_ u: URL) -> String {
+        let parts = u.pathComponents
+        guard parts.count >= 4, parts[parts.count - 4] == "LocalLow" else { return u.lastPathComponent }
+        return "unity-\(parts[parts.count - 3])-\(parts[parts.count - 2])-\(u.lastPathComponent)"
     }
 
     static func share(_ t: InstalledTitle) {
         let urls = files()
         Task { @MainActor in
             let zip = await archive(urls, name: t.id)
-            LibraryModel.log("report a problem for \(t.id): sharing \(urls.map(\.lastPathComponent).joined(separator: ", "))"
+            LibraryModel.log("report a problem for \(t.id): sharing \(urls.map(reportName).joined(separator: ", "))"
                              + (zip.map { " as \($0.lastPathComponent)" } ?? " (not zipped)"))
             present(zip.map { [$0] } ?? urls)
         }
@@ -1589,7 +1616,7 @@ enum ProblemReport {
         let zip = root.appendingPathComponent(base + ".zip")
         do {
             try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            for u in urls { try fm.copyItem(at: u, to: folder.appendingPathComponent(u.lastPathComponent)) }
+            for u in urls { try fm.copyItem(at: u, to: folder.appendingPathComponent(reportName(u))) }
         } catch {
             LibraryModel.log("report a problem: could not gather the logs: \(error)")
             return nil
