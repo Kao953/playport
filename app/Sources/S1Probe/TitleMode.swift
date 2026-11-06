@@ -105,6 +105,7 @@ final class TitleLaunch: ObservableObject {
         begin(screen: screen, frameLimit: frameLimit)
         // An Epic game's sign-in arguments stay out of the log (decision 0059).
         TitleMode.log("in-app start \(exe) \(EpicInstaller.redacted(args).joined(separator: " "))")
+        let logStart = TitleMode.logSize()
         // Prerequisites that run and leave the game too little pool end the launch before the
         // game, and the restart continues the Play, when Playport can restart itself
         // (decisions 0084, 0094).
@@ -130,6 +131,7 @@ final class TitleLaunch: ObservableObject {
                 TitleMode.log("prerequisites ran: \(outcome.line)")
             } else {
                 TitleMode.finish(outcome.line)
+                TitleMode.explain(outcome, logFrom: logStart)
             }
             DispatchQueue.main.async { MainActor.assumeIsolated { TitleLaunch.shared.end(outcome) } }
         }
@@ -349,6 +351,31 @@ enum TitleMode {
     #endif
 
     static func log(_ line: String) { WineHostRuntime.appendLog("title: " + line) }
+
+    static func logSize() -> UInt64 {
+        ((try? FileManager.default.attributesOfItem(atPath: AppLog.path))?[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
+    /// After a launch that failed or a game that ended with a code: what the code means
+    /// (ExitCodeNote) and the files the game asked for and did not get since its start
+    /// (FileFailNote), so a report says what kind of failure it was.
+    static func explain(_ outcome: LaunchCoordinator.Outcome, logFrom start: UInt64) {
+        switch outcome.kind {
+        case .exited(0): return
+        case .exited(let code): log("exit: \(ExitCodeNote.line(code))")
+        case .failed: break
+        default: return
+        }
+        guard let h = FileHandle(forReadingAtPath: AppLog.path) else { return }
+        defer { try? h.close() }
+        let end = (try? h.seekToEnd()) ?? 0
+        // The run's lines since its start, its last 4 MB at most (a session's log stops at 4 MB).
+        let from = max(start, end > 4 << 20 ? end - (4 << 20) : 0)
+        guard from < end, (try? h.seek(toOffset: from)) != nil, let data = try? h.readToEnd() else { return }
+        let missing = FileFailNote.summary(String(decoding: data, as: UTF8.self))
+        log("files the game could not open: " + (missing.isEmpty ? "none logged" : "\(missing.count), last first"))
+        for m in missing { log("  \(m)") }
+    }
 
     /// The `title: done` line, which a dev build also reports to the driver (RunEvents).
     static func finish(_ outcome: String) {

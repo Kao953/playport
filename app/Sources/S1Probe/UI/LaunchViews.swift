@@ -438,11 +438,8 @@ struct LaunchMessage: Codable, Equatable, Identifiable {
         case .exited(0):
             return nil
         case .exited(let code):
-            #if PLAYPORT_RELEASE
-            return .init(title: "\(title) stopped unexpectedly", text: "The game ended with an error.")
-            #else
-            return .init(title: "\(title) stopped unexpectedly", text: "It exited with code \(String(format: "0x%08X", code)).")
-            #endif
+            // The code and what it means in both builds: it is what a report needs first (ExitCodeNote).
+            return .init(title: "\(title) stopped unexpectedly", text: "It exited with code \(ExitCodeNote.line(code)).")
         case .refused where MemoryNeed.parseRefusal(line) != nil:
             let m = MemoryNeed.parseRefusal(line)!
             return .init(title: "Not enough memory for \(title)", text: MemoryNote.refused(limitMB: m.limitMB, needMB: m.needMB))
