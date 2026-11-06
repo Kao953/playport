@@ -76,6 +76,69 @@ public enum Cloud {
         return out
     }
 
+    // MARK: what the log shows
+
+    /// A local file as the guest sees it, for the log: `C:/users/playport/…`
+    /// under the user root, `<game>/…` under the install, else its last two
+    /// components (no container path in a report).
+    public static func shown(_ url: URL, _ roots: Roots) -> String {
+        let p = url.standardizedFileURL.path
+        for (base, label) in [(roots.gameInstall, "<game>"), (roots.user, "C:/users/playport")] {
+            let b = base.standardizedFileURL.path
+            if p == b { return label }
+            if p.hasPrefix(b + "/") { return label + p.dropFirst(b.count) }
+        }
+        return "…/" + url.pathComponents.suffix(2).joined(separator: "/")
+    }
+
+    /// The files under `root` written most recently, newest first, at most
+    /// `limit`, skipping `skip` (folder names, without case) and anything
+    /// older than `since`: where a game saves, whatever its cloud rules say.
+    public static func recentFiles(under root: URL, since: Date, limit: Int = 12,
+                                   skip: Set<String> = ["temp", "playport"]) -> [(url: URL, size: Int, time: Date)] {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .contentModificationDateKey, .fileSizeKey]
+        guard let walk = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return [] }
+        var out: [(url: URL, size: Int, time: Date)] = []
+        for case let url as URL in walk {
+            guard let v = try? url.resourceValues(forKeys: Set(keys)) else { continue }
+            if v.isDirectory == true {
+                if skip.contains(url.lastPathComponent.lowercased()) { walk.skipDescendants() }
+                continue
+            }
+            guard v.isRegularFile == true, let t = v.contentModificationDate, t >= since else { continue }
+            out.append((url, v.fileSize ?? 0, t))
+        }
+        return Array(out.sorted { $0.time > $1.time }.prefix(limit))
+    }
+
+    /// The prefix's `user.reg` for a user root (`<prefix>/drive_c/users/<name>`).
+    public static func userRegistry(_ roots: Roots) -> URL {
+        roots.user.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("user.reg")
+    }
+
+    /// The keys of a Wine `user.reg` that hold Unity PlayerPrefs (values named
+    /// `<key>_h<hash>`), with how many each holds: a Unity game's save that
+    /// Steam Cloud cannot carry, since it is not a file.
+    public static func unityPlayerPrefs(_ reg: String) -> [(key: String, values: Int)] {
+        var out: [(key: String, values: Int)] = []
+        var key: String?, n = 0
+        func flush() { if let key, n > 0 { out.append((key, n)) } }
+        for line in reg.split(separator: "\n", omittingEmptySubsequences: true) {
+            if line.hasPrefix("[") {
+                flush()
+                key = line.dropFirst().split(separator: "]", maxSplits: 1).first.map { $0.replacingOccurrences(of: "\\\\", with: "\\") }
+                n = 0
+            } else if line.hasPrefix("\""), let eq = line.range(of: "\"=") {
+                let name = line[line.index(after: line.startIndex)..<eq.lowerBound]
+                if let h = name.range(of: "_h", options: .backwards), !name[h.upperBound...].isEmpty,
+                   name[h.upperBound...].allSatisfy(\.isNumber) { n += 1 }
+            }
+        }
+        flush()
+        return out
+    }
+
     /// `%Token%rest` into the token (empty for none) and the rest.
     static func split(_ name: String) -> (String, String) {
         guard name.hasPrefix("%"), let end = name.dropFirst().firstIndex(of: "%") else { return ("", name) }

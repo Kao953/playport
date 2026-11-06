@@ -141,6 +141,42 @@ final class CloudTests: XCTestCase {
         XCTAssertEqual(r.remote.keys.sorted(), ["%WinAppDataLocalLow%Team Cherry/Hollow Knight/user1.dat", "api.bin"],
                        "a deleted file is not listed")
     }
+
+    func testTheLogShowsGuestPathsAndTheNewestFiles() throws {
+        let save = roots.user.appendingPathComponent("AppData/LocalLow/Team Cherry/Hollow Knight/user1.dat")
+        let old = roots.user.appendingPathComponent("Documents/old.txt")
+        let own = roots.user.appendingPathComponent("AppData/Local/Playport/session/request")
+        for f in [save, old, own] { try write(f, "x") }
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 3600)], ofItemAtPath: old.path)
+        XCTAssertEqual(Cloud.shown(save, roots), "C:/users/playport/AppData/LocalLow/Team Cherry/Hollow Knight/user1.dat")
+        XCTAssertEqual(Cloud.shown(roots.gameInstall.appendingPathComponent("Saves/a.sav"), roots), "<game>/Saves/a.sav")
+        XCTAssertEqual(Cloud.shown(dir.appendingPathComponent("elsewhere/x/y.bin"), roots), "…/x/y.bin")
+        let recent = Cloud.recentFiles(under: roots.user, since: Date(timeIntervalSinceNow: -14 * 24 * 3600))
+        XCTAssertEqual(recent.map { Cloud.shown($0.url, roots) }, ["C:/users/playport/AppData/LocalLow/Team Cherry/Hollow Knight/user1.dat"],
+                       "older files and Playport's own folder are left out")
+        let prefix = dir.appendingPathComponent("prefix")
+        let real = Cloud.Roots(user: prefix.appendingPathComponent("drive_c/users/playport"), gameInstall: roots.gameInstall, remote: roots.remote)
+        XCTAssertEqual(Cloud.userRegistry(real).standardizedFileURL, prefix.appendingPathComponent("user.reg").standardizedFileURL)
+    }
+
+    func testUnityPlayerPrefsInTheRegistry() {
+        let reg = """
+        WINE REGISTRY Version 2
+
+        [Software\\\\Wine] 1730000000
+        "Version"="win10"
+
+        [Software\\\\qureate\\\\BUNNY GARDEN] 1730000001
+        #time=1db2f0a1b2c3d4e
+        "SaveData_h1234567890"=hex:7b,7d,00
+        "Screenmanager Resolution Width_h182942802"=dword:00000610
+        "plain"="x"
+
+        """
+        let prefs = Cloud.unityPlayerPrefs(reg)
+        XCTAssertEqual(prefs.map(\.key), ["Software\\qureate\\BUNNY GARDEN"])
+        XCTAssertEqual(prefs.map(\.values), [2])
+    }
 }
 
 final class CloudServiceTests: XCTestCase {

@@ -892,7 +892,41 @@ public actor SteamService {
                                      conflicts: conflicts, at: at))
         log.info("cloud", "app \(appID): \(remote.count) on Steam, \(local.count) on the phone; \(downloaded.count) down, "
                  + "\(uploaded.count) up, \(conflicts.count) conflict(s)" + (failed.isEmpty ? "" : ", \(failed.count) failed"))
+        logCloudDetail(appID: appID, rules: rules, roots: roots, remote: remote, local: local, files: files, plan: plan, failed: failed)
         return CloudSync(downloaded: downloaded, uploaded: uploaded, conflicts: conflicts, failed: failed, at: at)
+    }
+
+    /// What a sync saw, for a report: the game's save rules, each cloud file and
+    /// where it is on the phone, and the files the game wrote most recently under
+    /// the user folder and the install, which show where it really saves.
+    private func logCloudDetail(appID: UInt32, rules: [Cloud.SaveRule], roots: Cloud.Roots, remote: [String: Cloud.Remote],
+                                local: [String: String], files: [String: URL], plan: [String: Cloud.Action], failed: [String: String]) {
+        if rules.isEmpty {
+            log.info("cloud", "app \(appID): no ufs save rules: only files the game writes through the Steam API (the emulator's remote folder)")
+        }
+        for r in rules {
+            log.info("cloud", "app \(appID): rule root=\(r.root.isEmpty ? "-" : r.root) path=\(r.path.isEmpty ? "-" : r.path) "
+                     + "pattern=\(r.pattern)\(r.recursive ? " recursive" : "")\(roots.folder(r.root) == nil ? " (root not mapped)" : "")")
+        }
+        for name in Set(remote.keys).union(local.keys).sorted() {
+            let at = (files[name] ?? roots.file(name)).map { Cloud.shown($0, roots) } ?? "no local root"
+            let phone = local[name] == nil ? "none" : local[name] == remote[name]?.sha ? "same" : "differs"
+            let steam = remote[name].map { "\($0.size) B, " + Date(timeIntervalSince1970: TimeInterval($0.time)).formatted(.iso8601) } ?? "none"
+            log.info("cloud", "app \(appID): file \(name): Steam \(steam); phone \(phone) at \(at); \(plan[name]?.rawValue ?? "nothing to do")"
+                     + (failed[name].map { "; failed: \($0)" } ?? ""))
+        }
+        let since = Date().addingTimeInterval(-14 * 24 * 3600)
+        for (label, root) in [("user folder", roots.user), ("game folder", roots.gameInstall)] {
+            let recent = Cloud.recentFiles(under: root, since: since, limit: label == "user folder" ? 12 : 6)
+            log.info("cloud", "app \(appID): newest files in the \(label) (14 days): \(recent.isEmpty ? "none" : "\(recent.count)")")
+            for f in recent {
+                log.info("cloud", "app \(appID):   \(f.time.formatted(.iso8601)) \(f.size) B \(Cloud.shown(f.url, roots))")
+            }
+        }
+        if let reg = try? String(contentsOf: Cloud.userRegistry(roots), encoding: .utf8) {
+            let prefs = Cloud.unityPlayerPrefs(reg)
+            log.info("cloud", "app \(appID): Unity PlayerPrefs in the registry: \(prefs.isEmpty ? "none" : prefs.map { "\($0.key) (\($0.values))" }.joined(separator: ", "))")
+        }
     }
 
     /// The conflicts and time of the last sync, for the paired account.
