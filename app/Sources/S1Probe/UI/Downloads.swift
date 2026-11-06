@@ -13,8 +13,9 @@
 // A job stops, with its stage kept for resume, on Pause, on a launch, on any
 // failure, and when its driver can no longer run it (Steam signed out, a
 // network Settings › Downloads does not allow); it then waits its turn again.
-// Downloads run in the foreground only: the screen stays on while one runs
-// (Download mode dims it, DownloadModeView.swift), and iOS suspending the app pauses it.
+// The screen stays on while one runs (Download mode dims it, DownloadModeView.swift).
+// In the background a silent sound keeps the app, and the download, running
+// (DownloadKeepAlive.swift, decision 0181); iOS suspending the app anyway pauses it.
 
 import Combine
 import Foundation
@@ -435,6 +436,7 @@ final class Downloads: ObservableObject {
 
     func updateIdleTimer() {
         UIApplication.shared.isIdleTimerDisabled = active != nil || !LibraryModel.shared.verifying.isEmpty
+        DownloadKeepAlive.shared.update(downloading: active != nil)
     }
 }
 
