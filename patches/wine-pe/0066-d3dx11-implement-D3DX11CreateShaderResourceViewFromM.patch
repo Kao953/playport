@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-717a-b88f-2d6c-9e50-0e3c.dynamic-ip6.hinet.net>
+Date: Sat, 7 Nov 2026 15:21:01 +0800
+Subject: [PATCH] d3dx11: implement D3DX11CreateShaderResourceViewFromMemory
+
+Mega Man Legacy Collection 2 (495050) loads its font textures with
+D3DX11CreateShaderResourceViewFromMemory and reads their size back
+through the view. The stub returned E_NOTIMPL, the font kept a width of
+0, and the game divided 0x10000 by it (STATUS_INTEGER_DIVIDE_BY_ZERO)
+right after its controls screen, on DXMT and on Vulkan alike.
+
+Create the texture as D3DX11CreateTextureFromMemory does and give it a
+default shader resource view.
+
+Class: upstream-bug
+Evidence: docs/decisions/0194-d3dx11-creates-views-from-memory.md
+Offered-upstream: no
+---
+ dlls/d3dx11_43/texture.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/d3dx11_43/texture.c b/dlls/d3dx11_43/texture.c
+index efac4deff54..0b164a777c6 100644
+--- a/dlls/d3dx11_43/texture.c
++++ b/dlls/d3dx11_43/texture.c
+@@ -776,10 +776,29 @@ HRESULT WINAPI D3DX11CreateShaderResourceViewFromMemory(ID3D11Device *device, co
+         SIZE_T data_size, D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump,
+         ID3D11ShaderResourceView **view, HRESULT *hresult)
+ {
+-    FIXME("device %p, data %p, data_size %Iu, load_info %p, pump %p, view %p, hresult %p stub!\n",
++    ID3D11Resource *texture;
++    HRESULT hr;
++
++    TRACE("device %p, data %p, data_size %Iu, load_info %p, pump %p, view %p, hresult %p.\n",
+             device, data, data_size, load_info, pump, view, hresult);
+ 
+-    return E_NOTIMPL;
++    if (!device || !view)
++        return E_INVALIDARG;
++    if (!data)
++        return E_FAIL;
++
++    if (pump)
++        FIXME("D3DX11 thread pump is currently unimplemented.\n");
++
++    *view = NULL;
++    if (SUCCEEDED((hr = create_texture(device, data, data_size, load_info, &texture))))
++    {
++        hr = ID3D11Device_CreateShaderResourceView(device, texture, NULL, view);
++        ID3D11Resource_Release(texture);
++    }
++    if (hresult)
++        *hresult = hr;
++    return hr;
+ }
+ 
+ HRESULT WINAPI D3DX11CreateTextureFromMemory(ID3D11Device *device, const void *data,

@@ -62,3 +62,4 @@
 0063-ntdll-kernel32-kernelbase-native-code-reads-KUSER_SH.patch
 0064-winmm-the-joystick-API-reads-the-host-s-pads-as-xinp.patch
 0065-wow64-an-i386-APC-gets-guest-addresses-not-host-ones.patch
+0066-d3dx11-implement-D3DX11CreateShaderResourceViewFromM.patch
