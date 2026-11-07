@@ -95,6 +95,9 @@ final class LibraryModel: ObservableObject {
 
     /// The latest removal of encrypted app tickets (removeSteamTickets); Play waits for it.
     private var ticketSweep: Task<Void, Never>?
+    /// A Play being prepared (decision 0196): a second Play meanwhile is refused, since its Steam
+    /// tickets would replace the first's, which then closes the CM session before the game starts.
+    private var playStarting = false
 
     /// Takes the encrypted app ticket out of every installed Steam game's
     /// emulator settings (decision 0017): at app start, for one a crash, a kill
@@ -230,6 +233,12 @@ final class LibraryModel: ObservableObject {
     func play(_ id: String, epicOffline: Bool = false, continuing: Bool = false,
               battleNetUpdate: BattleNetPlay.Update? = nil) async throws -> Bool {
         guard catalog.title(id: id)?.canPlay == true, !TitleLaunch.shared.running, !TitleLaunch.shared.spent else { return false }
+        guard !playStarting else {
+            Self.log("play \(id): refused, another Play is still starting")
+            return false
+        }
+        playStarting = true
+        defer { playStarting = false }
         // A Battle.net copy (PLA-514, decisions 0175 and 0177): the ban-risk notice before its first Play,
         // which goes on once accepted; declined, nothing starts. Then the update check (PLA-521), not while
         // a download of the copy is queued; while it runs the Play button says so and a second Play does not

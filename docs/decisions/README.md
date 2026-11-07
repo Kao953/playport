@@ -194,3 +194,4 @@ supersedes it.
 | [0193](0193-a-launch-logs-on-a-dropped-session.md) | After Play, a CM session iOS dropped in the background logs on again once (5 s) before the tickets, so the game is not told it is logged off (amends 0017, 0062) |
 | [0194](0194-d3dx11-creates-views-from-memory.md) | Builtin d3dx11 implements D3DX11CreateShaderResourceViewFromMemory over its texture loader (Mega Man Legacy Collection 2 divided by a font width of 0) |
 | [0195](0195-steam-client-logs-first-calls.md) | Playport's Steam client logs each i386 slot's and each export's first call with its answer (a packed DRM check left no trace) |
+| [0196](0196-one-play-starts-at-a-time.md) | A Play is refused while another is still starting: a double tap had the second Play replace the first's tickets, and the CM closed before the game (amends 0062, 0193) |
