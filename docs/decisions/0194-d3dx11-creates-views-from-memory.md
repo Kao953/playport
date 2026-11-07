@@ -25,6 +25,10 @@ the other d3dx11 loaders.
   keeps the file's format and size copies the blocks. Converting from or to BC7 stays unsupported
   (bcdec's BC7 decoder is in its `WINE_UNUSED` part). The
   diagnostic stays: a texture d3dx11 cannot load is logged as `d3dx11: SRV from memory: …`.
+- 0068 put the DXGI mapping only in the legacy-DDS function; a DX10-header file goes through
+  `dxgi_format_from_d3dx_pixel_format_id`, which still returned UNKNOWN. A per-step diagnostic
+  (`patches/wine-pe/0069`) logged `image info refused, … d3dx format 35, file format 100`;
+  `patches/wine-pe/0070` maps BC7 there in d3dx10 and d3dx11.
 
 ## Consequences
 
