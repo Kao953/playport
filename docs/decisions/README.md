@@ -193,3 +193,4 @@ supersedes it.
 | [0192](0192-steam-client-serves-remote-storage.md) | Playport's Steam client serves ISteamRemoteStorage's file methods from %APPDATA%\\GSE Saves\\<appid>\\remote, the folder the emulator and the cloud sync use (amends 0115, 0161) |
 | [0193](0193-a-launch-logs-on-a-dropped-session.md) | After Play, a CM session iOS dropped in the background logs on again once (5 s) before the tickets, so the game is not told it is logged off (amends 0017, 0062) |
 | [0194](0194-d3dx11-creates-views-from-memory.md) | Builtin d3dx11 implements D3DX11CreateShaderResourceViewFromMemory over its texture loader (Mega Man Legacy Collection 2 divided by a font width of 0) |
+| [0195](0195-steam-client-logs-first-calls.md) | Playport's Steam client logs each i386 slot's and each export's first call with its answer (a packed DRM check left no trace) |

@@ -276,6 +276,7 @@ typedef struct iface {
     unsigned char called[MAX_SLOTS]; /* each trampoline logs its first call */
     void *targets[MAX_SLOTS];        /* the served method of a slot, NULL when it is not served */
     char kinds[MAX_SLOTS];           /* traced: how its result is shown (steamclient_trace.h) */
+    unsigned char seen[MAX_SLOTS];   /* i386: each slot logs its first call, served or not */
 } iface;
 
 static void log_missing(iface *self, unsigned slot)
@@ -285,6 +286,32 @@ static void log_missing(iface *self, unsigned slot)
     if (slot < sizeof(self->called)) self->called[slot] = 1;
     say(self->name, " slot ", num(n, slot), " ", self->names && slot < self->slots ? self->names[slot] : "(no table)",
         ": not served, answers 0");
+}
+
+/* Every slot's and export's first call, with what it answered: the release runtime has no
+ * trace, and a DRM check that gives up on an answer otherwise leaves no line (decision 0195). */
+#ifdef __i386__
+static void log_first_slot(iface *self, unsigned slot, uint64_t r, int served)
+{
+    char n[24], v[24];
+    if (slot >= MAX_SLOTS || self->seen[slot]) return;
+    self->seen[slot] = 1;
+    say(self->name, " slot ", num(n, slot), self->names && slot < self->slots ? " " : "",
+        self->names && slot < self->slots ? self->names[slot] : "", NULL);
+    say("  first call ", served ? "served" : "not served", ", answered ", num(v, r), NULL, NULL);
+}
+#endif
+
+static const char *exports_seen[64];
+static void first_export(const char *name)
+{
+    unsigned i;
+    AcquireSRWLockExclusive(&lock);
+    for (i = 0; i < 64 && exports_seen[i]; i++)
+        if (exports_seen[i] == name) { ReleaseSRWLockExclusive(&lock); return; }
+    if (i < 64) exports_seen[i] = name;
+    say("export ", name, ": first call", NULL, NULL, NULL);
+    ReleaseSRWLockExclusive(&lock);
 }
 
 /* --- the dev app's per-call trace (steamclient_trace.h): only when HELLO's `trace` is 1 */
@@ -587,6 +614,9 @@ void x86_slot_traced(iface *self, unsigned slot, const uint32_t *args, uint64_t 
     uint64_t a1, a2, a4;
     int served = slot < self->slots && self->targets[slot];
     char kind = served ? self->kinds[slot] : (self->hidden && slot < self->slots && self->hidden[slot] == '1' ? 'h' : 'u');
+    AcquireSRWLockExclusive(&lock);
+    log_first_slot(self, slot, r, served);
+    ReleaseSRWLockExclusive(&lock);
     if (!snapshot.trace) return;
     for (unsigned i = 0; i < words && i < 5; i++) d[i] = args[i];
     if (pp_tr_same(method, "IsAPICallCompleted") || pp_tr_same(method, "GetAPICallFailureReason")
@@ -1383,7 +1413,7 @@ static const struct { const char *family, *method; void *fn; } served[] = {
 #define DECLARE(n) static void *vt_##n[PP_SLOTS_##n];
 PP_SLOT_CLASSES(DECLARE)
 #define OBJECT(n, v) { vt_##n, #n, v, pp_names_##n, pp_hidden_##n, pp_words_##n, pp_float_##n, PP_SLOTS_##n, \
-                       { 0 }, { 0 }, { 0 } },
+                       { 0 }, { 0 }, { 0 }, { 0 } },
 static iface objects[] = { PP_SLOT_INTERFACES(OBJECT) };
 #define NOBJECTS (sizeof(objects) / sizeof(*objects))
 
@@ -1482,6 +1512,7 @@ static iface *find(const char *version, const char *through)
 
 __declspec(dllexport) void *CreateInterface(const char *version, int *code)
 {
+    first_export(__func__);
     iface *o = find(version, "CreateInterface");
     if (code) *code = o ? 0 : 1;
     return o;
@@ -1489,6 +1520,7 @@ __declspec(dllexport) void *CreateInterface(const char *version, int *code)
 
 __declspec(dllexport) uint8_t Steam_BGetCallback(int32_t pipe, callback_msg *msg)
 {
+    first_export(__func__);
     int got;
     (void)pipe;
     if (!msg) return 0;
@@ -1506,6 +1538,7 @@ __declspec(dllexport) uint8_t Steam_BGetCallback(int32_t pipe, callback_msg *msg
 
 __declspec(dllexport) uint8_t Steam_FreeLastCallback(int32_t pipe)
 {
+    first_export(__func__);
     (void)pipe;
     AcquireSRWLockExclusive(&lock);
     holding = 0;
@@ -1517,6 +1550,7 @@ __declspec(dllexport) uint8_t Steam_FreeLastCallback(int32_t pipe)
 __declspec(dllexport) uint8_t Steam_GetAPICallResult(int32_t pipe, uint64_t call, void *buf, int size, int expected,
                                                     uint8_t *failed)
 {
+    first_export(__func__);
     uint8_t r;
     (void)pipe;
     AcquireSRWLockExclusive(&lock);
@@ -1526,70 +1560,76 @@ __declspec(dllexport) uint8_t Steam_GetAPICallResult(int32_t pipe, uint64_t call
     return r;
 }
 
-__declspec(dllexport) void Steam_ReleaseThreadLocalMemory(int thread_exit) { (void)thread_exit; }
+__declspec(dllexport) void Steam_ReleaseThreadLocalMemory(int thread_exit) { first_export(__func__); (void)thread_exit; }
 
 __declspec(dllexport) uint8_t Steam_IsKnownInterface(const char *version)
 {
+    first_export(__func__);
     iface *o = find(version, "Steam_IsKnownInterface");
     return o != NULL;
 }
 
 __declspec(dllexport) void Steam_NotifyMissingInterface(int32_t pipe, const char *version)
 {
+    first_export(__func__);
     (void)pipe;
     hello();
     say("steam_api reports a missing interface: ", version, NULL, NULL, NULL, NULL);
 }
 
 /* The pre-1.2x global entry points. */
-__declspec(dllexport) int32_t Steam_CreateSteamPipe(void) { hello(); return ++pipes; }
-__declspec(dllexport) uint8_t Steam_BReleaseSteamPipe(int32_t pipe) { (void)pipe; return 1; }
-__declspec(dllexport) int32_t Steam_ConnectToGlobalUser(int32_t pipe) { (void)pipe; hello(); return 1; }
-__declspec(dllexport) int32_t Steam_CreateGlobalUser(int32_t *pipe) { if (pipe) *pipe = ++pipes; hello(); return 1; }
-__declspec(dllexport) void Steam_ReleaseUser(int32_t pipe, int32_t user) { (void)pipe; (void)user; }
-__declspec(dllexport) int32_t Steam_GetHSteamUserCurrent(void) { return 1; }
-__declspec(dllexport) void Steam_SetLocalIPBinding(uint32_t ip, uint16_t port) { (void)ip; (void)port; }
-__declspec(dllexport) int Steam_InitiateGameConnection(void) { return 0; }
-__declspec(dllexport) void Steam_TerminateGameConnection(void) { }
-__declspec(dllexport) uint8_t Steam_GSLogOn(void) { return 0; }
-__declspec(dllexport) uint8_t Steam_GSLogOff(void) { return 0; }
-__declspec(dllexport) void Steam_RunCallbacks(int32_t pipe, uint8_t game_server) { (void)pipe; (void)game_server; }
+__declspec(dllexport) int32_t Steam_CreateSteamPipe(void) { first_export(__func__); hello(); return ++pipes; }
+__declspec(dllexport) uint8_t Steam_BReleaseSteamPipe(int32_t pipe) { first_export(__func__); (void)pipe; return 1; }
+__declspec(dllexport) int32_t Steam_ConnectToGlobalUser(int32_t pipe) { first_export(__func__); (void)pipe; hello(); return 1; }
+__declspec(dllexport) int32_t Steam_CreateGlobalUser(int32_t *pipe) { first_export(__func__); if (pipe) *pipe = ++pipes; hello(); return 1; }
+__declspec(dllexport) void Steam_ReleaseUser(int32_t pipe, int32_t user) { first_export(__func__); (void)pipe; (void)user; }
+__declspec(dllexport) int32_t Steam_GetHSteamUserCurrent(void) { first_export(__func__); return 1; }
+__declspec(dllexport) void Steam_SetLocalIPBinding(uint32_t ip, uint16_t port) { first_export(__func__); (void)ip; (void)port; }
+__declspec(dllexport) int Steam_InitiateGameConnection(void) { first_export(__func__); return 0; }
+__declspec(dllexport) void Steam_TerminateGameConnection(void) { first_export(__func__); }
+__declspec(dllexport) uint8_t Steam_GSLogOn(void) { first_export(__func__); return 0; }
+__declspec(dllexport) uint8_t Steam_GSLogOff(void) { first_export(__func__); return 0; }
+__declspec(dllexport) void Steam_RunCallbacks(int32_t pipe, uint8_t game_server) { first_export(__func__); (void)pipe; (void)game_server; }
 /* More of them, which an older steam_api may look up: the user's state as the interfaces answer
  * it, and no game server (cdecl: an unread argument costs nothing). */
 __declspec(dllexport) uint8_t Steam_BLoggedOn(int32_t user, int32_t pipe)
 {
+    first_export(__func__);
     (void)user; (void)pipe;
     hello();
     return snapshot.armed && snapshot.logged_on;
 }
-__declspec(dllexport) uint8_t Steam_BConnected(int32_t user, int32_t pipe) { return Steam_BLoggedOn(user, pipe); }
+__declspec(dllexport) uint8_t Steam_BConnected(int32_t user, int32_t pipe) { first_export(__func__); return Steam_BLoggedOn(user, pipe); }
 __declspec(dllexport) int32_t Steam_CreateLocalUser(int32_t *pipe, int32_t type)
 {
+    first_export(__func__);
     (void)type;
     if (pipe) *pipe = ++pipes;
     hello();
     return 1;
 }
-__declspec(dllexport) void Steam_LogOn(int32_t user, int32_t pipe, uint64_t id) { (void)user; (void)pipe; (void)id; }
-__declspec(dllexport) void Steam_LogOff(int32_t user, int32_t pipe) { (void)user; (void)pipe; }
-__declspec(dllexport) void *Steam_GetGSHandle(int32_t user, int32_t pipe) { (void)user; (void)pipe; return NULL; }
-__declspec(dllexport) uint8_t Steam_GSBLoggedOn(void *gs) { (void)gs; return 0; }
-__declspec(dllexport) uint8_t Steam_GSBSecure(void *gs) { (void)gs; return 0; }
-__declspec(dllexport) uint64_t Steam_GSGetSteamID(void *gs) { (void)gs; return 0; }
+__declspec(dllexport) void Steam_LogOn(int32_t user, int32_t pipe, uint64_t id) { first_export(__func__); (void)user; (void)pipe; (void)id; }
+__declspec(dllexport) void Steam_LogOff(int32_t user, int32_t pipe) { first_export(__func__); (void)user; (void)pipe; }
+__declspec(dllexport) void *Steam_GetGSHandle(int32_t user, int32_t pipe) { first_export(__func__); (void)user; (void)pipe; return NULL; }
+__declspec(dllexport) uint8_t Steam_GSBLoggedOn(void *gs) { first_export(__func__); (void)gs; return 0; }
+__declspec(dllexport) uint8_t Steam_GSBSecure(void *gs) { first_export(__func__); (void)gs; return 0; }
+__declspec(dllexport) uint64_t Steam_GSGetSteamID(void *gs) { first_export(__func__); (void)gs; return 0; }
 
 /* Breakpad: Steam's crash reporter, which Playport does not run. */
 __declspec(dllexport) void Breakpad_SteamMiniDumpInit(uint32_t version, const char *date, const char *time)
 {
+    first_export(__func__);
     (void)version; (void)date; (void)time;
 }
-__declspec(dllexport) void Breakpad_SteamSetAppID(uint32_t app) { (void)app; }
-__declspec(dllexport) void Breakpad_SteamSetSteamID(uint64_t id) { (void)id; }
-__declspec(dllexport) void Breakpad_SteamWriteMiniDumpSetComment(const char *comment) { (void)comment; }
+__declspec(dllexport) void Breakpad_SteamSetAppID(uint32_t app) { first_export(__func__); (void)app; }
+__declspec(dllexport) void Breakpad_SteamSetSteamID(uint64_t id) { first_export(__func__); (void)id; }
+__declspec(dllexport) void Breakpad_SteamWriteMiniDumpSetComment(const char *comment) { first_export(__func__); (void)comment; }
 __declspec(dllexport) void Breakpad_SteamWriteMiniDumpUsingExceptionInfoWithBuildId(uint32_t code, void *info, uint32_t build)
 {
+    first_export(__func__);
     (void)code; (void)info; (void)build;
 }
-__declspec(dllexport) void Breakpad_SetSteamID(uint64_t id) { (void)id; }
+__declspec(dllexport) void Breakpad_SetSteamID(uint64_t id) { first_export(__func__); (void)id; }
 
 BOOL WINAPI DllEntry(HINSTANCE module, DWORD reason, void *reserved)
 {
