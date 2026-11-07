@@ -885,6 +885,17 @@ final class LibraryServiceTests: XCTestCase {
         let ticket = await s.encryptedAppTicket(appID: 367520)
         XCTAssertNotNil(ticket)
 
+        // Two Plays at once: one logon, which both get.
+        await b.disconnect()
+        await b.set(restoreDelay: 100_000_000)
+        async let first = s.reconnectForLaunch()
+        async let second = s.reconnectForLaunch()
+        let both = await [first, second]
+        XCTAssertEqual(both, [true, true])
+        let restoresTwice = await b.count("restore")
+        XCTAssertEqual(restoresTwice, restoresAfter + 1)
+        await b.set(restoreDelay: 0)
+
         // A logon slower than the limit: false, and the session is left closed.
         await b.disconnect()
         await b.set(restoreDelay: 2_000_000_000)

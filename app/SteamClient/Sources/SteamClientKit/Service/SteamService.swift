@@ -209,6 +209,8 @@ public actor SteamService {
     private var ticketBroker: SteamTicketBroker?
     private var playReconnectAt: Date?
     private var playReconnecting = false
+    /// A launch's logon in progress (reconnectForLaunch), which a second Play joins.
+    private var launchReconnect: Task<Bool, Never>?
     /// A dropped CM connection is reconnected for the game's tickets at most this often.
     public static let playReconnectInterval: TimeInterval = 60
 
@@ -1089,6 +1091,16 @@ public actor SteamService {
     /// when the logon failed or ran out of time (the session is then closed, so
     /// nothing outlives the limit into the launch).
     public func reconnectForLaunch(timeout: Double = 5) async -> Bool {
+        // A second Play while one logs on waits for it rather than logging on beside it.
+        if let launchReconnect { return await launchReconnect.value }
+        let task = Task { await reconnectForLaunchOnce(timeout: timeout) }
+        launchReconnect = task
+        let result = await task.value
+        launchReconnect = nil
+        return result
+    }
+
+    private func reconnectForLaunchOnce(timeout: Double) async -> Bool {
         guard !suspended, case .signedIn = state else { return false }
         let s = await backend.isLoggedOn()
         if s.loggedOn, s.connected { return false }

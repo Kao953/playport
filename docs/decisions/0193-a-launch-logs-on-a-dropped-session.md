@@ -22,6 +22,8 @@ logged in to play this game").
 - When the ticket asked for again also fails and the new session is gone too (on 2026-11-07
   Steam closed the connection 0.3 s after the logon, on the ticket request for 495050), the
   session logs on once more and the game starts without the encrypted app ticket.
+- A second Play while that logon runs waits for it and gets its result: two logons at once
+  collide (`restore while restore is in progress`).
 - A logon that fails or runs out of time closes the session, so nothing outlives the limit into
   the launch; the game starts as before, not logged on.
 - A refusal from Steam on a live session (EResult Fail) logs on nothing.

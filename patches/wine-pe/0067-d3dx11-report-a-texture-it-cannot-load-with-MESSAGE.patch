@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-717a-b88f-2d6c-9e50-0e3c.dynamic-ip6.hinet.net>
+Date: Sat, 7 Nov 2026 15:49:39 +0800
+Subject: [PATCH] d3dx11: report a texture it cannot load with MESSAGE
+
+The release runtime runs with every Wine debug channel off, so
+D3DX11CreateShaderResourceViewFromMemory's failures left no trace:
+Mega Man Legacy Collection 2 still got no font texture after it was
+implemented. Report the HRESULT and, for a DDS file, its header's
+format through MESSAGE, which no channel gates.
+
+Class: diagnostics
+Evidence: docs/decisions/0194-d3dx11-creates-views-from-memory.md
+Offered-upstream: no
+---
+ dlls/d3dx11_43/texture.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/dlls/d3dx11_43/texture.c b/dlls/d3dx11_43/texture.c
+index 0b164a777c6..67930df8119 100644
+--- a/dlls/d3dx11_43/texture.c
++++ b/dlls/d3dx11_43/texture.c
+@@ -772,6 +772,28 @@ HRESULT WINAPI D3DX11CreateTextureFromResourceW(ID3D11Device *device, HMODULE mo
+     return hr;
+ }
+ 
++/* Playport: the release runtime has no Wine debug channel, so a texture a game cannot
++ * load is reported with MESSAGE: the HRESULT and, for a DDS file, its header's format. */
++static void report_load_failure(const void *data, SIZE_T size, HRESULT hr)
++{
++    const BYTE *b = data;
++    const DWORD *d = data;
++
++    if (size < 4)
++    {
++        MESSAGE("d3dx11: SRV from memory: texture failed, hr %#lx, %Iu bytes\n", hr, size);
++        return;
++    }
++    MESSAGE("d3dx11: SRV from memory: texture failed, hr %#lx, %Iu bytes, head %02x %02x %02x %02x\n",
++            hr, size, b[0], b[1], b[2], b[3]);
++    if (size >= 128 && !memcmp(b, "DDS ", 4))
++        MESSAGE("d3dx11:   DDS %lux%lu depth %lu mips %lu flags %#lx caps2 %#lx, pixel format flags %#lx "
++                "fourcc %#lx bits %lu masks %#lx %#lx %#lx %#lx\n",
++                d[4], d[3], d[6], d[7], d[2], d[28], d[20], d[21], d[22], d[23], d[24], d[25], d[26]);
++    if (size >= 148 && !memcmp(b, "DDS ", 4) && d[21] == 0x30315844 /* DX10 */)
++        MESSAGE("d3dx11:   DX10 format %lu dimension %lu misc %#lx array %lu\n", d[32], d[33], d[34], d[35]);
++}
++
+ HRESULT WINAPI D3DX11CreateShaderResourceViewFromMemory(ID3D11Device *device, const void *data,
+         SIZE_T data_size, D3DX11_IMAGE_LOAD_INFO *load_info, ID3DX11ThreadPump *pump,
+         ID3D11ShaderResourceView **view, HRESULT *hresult)
+@@ -795,7 +817,11 @@ HRESULT WINAPI D3DX11CreateShaderResourceViewFromMemory(ID3D11Device *device, co
+     {
+         hr = ID3D11Device_CreateShaderResourceView(device, texture, NULL, view);
+         ID3D11Resource_Release(texture);
++        if (FAILED(hr))
++            MESSAGE("d3dx11: SRV from memory: CreateShaderResourceView failed, hr %#lx\n", hr);
+     }
++    else
++        report_load_failure(data, data_size, hr);
+     if (hresult)
+         *hresult = hr;
+     return hr;
