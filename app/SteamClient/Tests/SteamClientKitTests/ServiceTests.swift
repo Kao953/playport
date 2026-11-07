@@ -859,6 +859,47 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertEqual(settings, SteamAPISwap.Settings(appID: 10))
     }
 
+    func testReconnectForLaunchLogsOnADroppedSessionOnce() async throws {
+        let b = FakeBackend()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await b.set(stored: FakeBackend.session(exp: 2_000_000_000))
+        let s = SteamService(backend: b, log: Logger { _ in }, stateDirectory: dir)
+        // Signed out: nothing to log on.
+        let signedOut = await s.reconnectForLaunch()
+        XCTAssertFalse(signedOut)
+        _ = await s.restoreIfPossible()
+        // Still connected: nothing to do.
+        let live = await s.reconnectForLaunch()
+        XCTAssertFalse(live)
+        let restoresBefore = await b.count("restore")
+
+        // iOS dropped the socket: one logon, and the ticket can be asked for again.
+        await b.disconnect()
+        let dropped = await s.encryptedAppTicket(appID: 367520)
+        XCTAssertNil(dropped)
+        let again = await s.reconnectForLaunch()
+        XCTAssertTrue(again)
+        let restoresAfter = await b.count("restore")
+        XCTAssertEqual(restoresAfter, restoresBefore + 1)
+        let ticket = await s.encryptedAppTicket(appID: 367520)
+        XCTAssertNotNil(ticket)
+
+        // A logon slower than the limit: false, and the session is left closed.
+        await b.disconnect()
+        await b.set(restoreDelay: 2_000_000_000)
+        let slow = await s.reconnectForLaunch(timeout: 0.2)
+        XCTAssertFalse(slow)
+        let afterSlow = await b.isLoggedOn()
+        XCTAssertFalse(afterSlow.connected)
+
+        // Suspended for the launch: never.
+        await b.set(restoreDelay: 0)
+        await s.suspendForLaunch()
+        let suspended = await s.reconnectForLaunch()
+        XCTAssertFalse(suspended)
+    }
+
     func testEncryptedAppTicketOnTheSignedInSessionOnly() async throws {
         let b = FakeBackend()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")

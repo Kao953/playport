@@ -348,6 +348,8 @@ final class LibraryModel: ObservableObject {
         if let app = t.appID, settings.steamAPI == .emulated || settings.steamAPI == .client, let service {
             await ticketSweep?.value
             ticket = await service.encryptedAppTicket(appID: app)
+            // A session iOS dropped in the background logs on again once (decision 0193).
+            if ticket == nil, await service.reconnectForLaunch() { ticket = await service.encryptedAppTicket(appID: app) }
             let session = await service.prepareTicketSession(appID: app, playLog: SteamTicketHost.log)
             tickets = session.broker
             if case .notOwned = session { owned = false }

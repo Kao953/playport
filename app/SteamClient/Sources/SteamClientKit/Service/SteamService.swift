@@ -1080,6 +1080,33 @@ public actor SteamService {
         }
     }
 
+    /// A launch's dropped CM session, logged on anew within `timeout` seconds
+    /// (decision 0193), asked for after Play and before `suspendForLaunch`. iOS
+    /// closes the app's socket while it sits in the background, and the session
+    /// learns of it only when the launch's first request fails; without this
+    /// the game would start on a session that is not logged on. True only when
+    /// it logged on anew: false when signed out, suspended, still connected, or
+    /// when the logon failed or ran out of time (the session is then closed, so
+    /// nothing outlives the limit into the launch).
+    public func reconnectForLaunch(timeout: Double = 5) async -> Bool {
+        guard !suspended, case .signedIn = state else { return false }
+        let s = await backend.isLoggedOn()
+        if s.loggedOn, s.connected { return false }
+        let started = Date()
+        let backend = self.backend
+        await backend.disconnect()
+        do {
+            _ = try await withDeadline(timeout, "CM logon before the launch") { try await backend.restore() }
+            log.info("ticket", "CM logged on again before the launch in "
+                     + String(format: "%.2f", Date().timeIntervalSince(started)) + " s")
+            return true
+        } catch {
+            await backend.disconnect()
+            log.warn("ticket", "CM logon before the launch failed: \(error)")
+            return false
+        }
+    }
+
     /// Before the runtime starts (decision 0004): cancel pairing and refuse
     /// further Steam work in this process. The CM session closes, unless the
     /// play's tickets are armed (prepareTicketSession): then it stays logged on
