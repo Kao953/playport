@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-717a-b88f-2d6c-9e50-0e3c.dynamic-ip6.hinet.net>
+Date: Sat, 7 Nov 2026 17:30:34 +0800
+Subject: [PATCH] d3dx11: report which step of a texture load fails
+
+With BC7 known, Mega Man Legacy Collection 2's fonts still failed with
+E_FAIL, on DXMT and on Vulkan alike. MESSAGE whether the image was not
+read, its info was refused, the texture data did not load, or the device
+refused the texture, with the description it was given.
+
+Class: diagnostics
+Evidence: docs/decisions/0194-d3dx11-creates-views-from-memory.md
+Offered-upstream: no
+---
+ dlls/d3dx11_43/texture.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/dlls/d3dx11_43/texture.c b/dlls/d3dx11_43/texture.c
+index 7fad9945a5c..2b174071d79 100644
+--- a/dlls/d3dx11_43/texture.c
++++ b/dlls/d3dx11_43/texture.c
+@@ -387,11 +387,16 @@ HRESULT load_texture_data(const void *data, SIZE_T size, D3DX11_IMAGE_LOAD_INFO
+     *resource_data = NULL;
+     hr = d3dx_image_init(data, size, &image, 0, D3DX_IMAGE_SUPPORT_DXT10);
+     if (FAILED(hr))
++    {
++        MESSAGE("d3dx11: image not read, hr %#lx\n", hr);
+         return E_FAIL;
++    }
+ 
+     hr = d3dx11_image_info_from_d3dx_image(&img_info, &image);
+     if (FAILED(hr))
+     {
++        MESSAGE("d3dx11: image info refused, hr %#lx, d3dx format %u, file format %u\n", hr, image.format,
++                image.image_file_format);
+         WARN("Invalid or unsupported image file, hr %#lx.\n", hr);
+         hr = E_FAIL;
+         goto end;
+@@ -662,8 +667,17 @@ static HRESULT create_texture(ID3D11Device *device, const void *data, SIZE_T siz
+         load_info_copy.pSrcInfo = &img_info;
+ 
+     if (FAILED((hr = load_texture_data(data, size, &load_info_copy, &resource_data))))
++    {
++        MESSAGE("d3dx11: texture data not loaded, hr %#lx\n", hr);
+         return hr;
++    }
+     hr = create_d3d_texture(device, &load_info_copy, resource_data, texture);
++    if (FAILED(hr))
++        MESSAGE("d3dx11: CreateTexture failed, hr %#lx: %ux%u depth %u mips %u format %u usage %u bind %#x "
++                "cpu %#x misc %#x, first row pitch %u\n", hr, load_info_copy.Width, load_info_copy.Height,
++                load_info_copy.Depth, load_info_copy.MipLevels, load_info_copy.Format, load_info_copy.Usage,
++                load_info_copy.BindFlags, load_info_copy.CpuAccessFlags, load_info_copy.MiscFlags,
++                resource_data ? resource_data[0].SysMemPitch : 0);
+     free(resource_data);
+     return hr;
+ }
