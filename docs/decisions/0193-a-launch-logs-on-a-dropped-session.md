@@ -19,6 +19,9 @@ logged in to play this game").
   `SteamService.reconnectForLaunch` closes it and logs on again from the stored session, within
   5 s, once. The ticket is then asked for again, and the play's tickets are armed on the new
   session.
+- When the ticket asked for again also fails and the new session is gone too (on 2026-11-07
+  Steam closed the connection 0.3 s after the logon, on the ticket request for 495050), the
+  session logs on once more and the game starts without the encrypted app ticket.
 - A logon that fails or runs out of time closes the session, so nothing outlives the limit into
   the launch; the game starts as before, not logged on.
 - A refusal from Steam on a live session (EResult Fail) logs on nothing.

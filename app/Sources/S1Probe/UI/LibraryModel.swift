@@ -349,7 +349,12 @@ final class LibraryModel: ObservableObject {
             await ticketSweep?.value
             ticket = await service.encryptedAppTicket(appID: app)
             // A session iOS dropped in the background logs on again once (decision 0193).
-            if ticket == nil, await service.reconnectForLaunch() { ticket = await service.encryptedAppTicket(appID: app) }
+            // Steam may answer the ticket request itself by closing the connection: then the
+            // session logs on once more and the game goes without that ticket.
+            if ticket == nil, await service.reconnectForLaunch() {
+                ticket = await service.encryptedAppTicket(appID: app)
+                if ticket == nil { _ = await service.reconnectForLaunch() }
+            }
             let session = await service.prepareTicketSession(appID: app, playLog: SteamTicketHost.log)
             tickets = session.broker
             if case .notOwned = session { owned = false }
