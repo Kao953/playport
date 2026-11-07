@@ -64,3 +64,4 @@
 0065-wow64-an-i386-APC-gets-guest-addresses-not-host-ones.patch
 0066-d3dx11-implement-D3DX11CreateShaderResourceViewFromM.patch
 0067-d3dx11-report-a-texture-it-cannot-load-with-MESSAGE.patch
+0068-d3dx-load-BC7-textures.patch

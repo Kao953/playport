@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-717a-b88f-2d6c-9e50-0e3c.dynamic-ip6.hinet.net>
+Date: Sat, 7 Nov 2026 16:27:25 +0800
+Subject: [PATCH] d3dx: load BC7 textures
+
+Mega Man Legacy Collection 2 (495050) keeps its font textures as DX10
+DDS files in DXGI_FORMAT_BC7_UNORM (98), which the shared d3dx pixel
+format table did not know: D3DX11CreateShaderResourceViewFromMemory
+failed with E_FAIL for every one of them, the fonts kept a width of 0
+and the game divided by it.
+
+Add BC7_UNORM as a 4x4 block format of 16 bytes, map it to and from
+DXGI, and decompress it with bcdec_bc7 when a load converts it. A load
+that keeps the file's format and size copies the blocks unchanged.
+Compressing to BC7 stays unsupported.
+
+Class: upstream-bug
+Evidence: docs/decisions/0194-d3dx11-creates-views-from-memory.md
+Offered-upstream: no
+---
+ dlls/d3dx10_43/texture.c     | 1 +
+ dlls/d3dx11_43/texture.c     | 1 +
+ dlls/d3dx9_36/d3dx_helpers.c | 7 +++++++
+ dlls/d3dx9_36/d3dx_helpers.h | 1 +
+ 4 files changed, 10 insertions(+)
+
+diff --git a/dlls/d3dx10_43/texture.c b/dlls/d3dx10_43/texture.c
+index 1a341ef5220..ec8f72acf21 100644
+--- a/dlls/d3dx10_43/texture.c
++++ b/dlls/d3dx10_43/texture.c
+@@ -86,6 +86,7 @@ static DXGI_FORMAT dxgi_format_from_legacy_dds_d3dx_pixel_format_id(enum d3dx_pi
+         case D3DX_PIXEL_FORMAT_BC4_SNORM:                return DXGI_FORMAT_BC4_SNORM;
+         case D3DX_PIXEL_FORMAT_BC5_UNORM:                return DXGI_FORMAT_BC5_UNORM;
+         case D3DX_PIXEL_FORMAT_BC5_SNORM:                return DXGI_FORMAT_BC5_SNORM;
++        case D3DX_PIXEL_FORMAT_BC7_UNORM:                return DXGI_FORMAT_BC7_UNORM;
+ 
+         /* These formats are known and explicitly unsupported on d3dx10+. */
+         case D3DX_PIXEL_FORMAT_U8V8W8Q8_SNORM:
+diff --git a/dlls/d3dx11_43/texture.c b/dlls/d3dx11_43/texture.c
+index 67930df8119..7fad9945a5c 100644
+--- a/dlls/d3dx11_43/texture.c
++++ b/dlls/d3dx11_43/texture.c
+@@ -84,6 +84,7 @@ static DXGI_FORMAT dxgi_format_from_legacy_dds_d3dx_pixel_format_id(enum d3dx_pi
+         case D3DX_PIXEL_FORMAT_BC4_SNORM:                return DXGI_FORMAT_BC4_SNORM;
+         case D3DX_PIXEL_FORMAT_BC5_UNORM:                return DXGI_FORMAT_BC5_UNORM;
+         case D3DX_PIXEL_FORMAT_BC5_SNORM:                return DXGI_FORMAT_BC5_SNORM;
++        case D3DX_PIXEL_FORMAT_BC7_UNORM:                return DXGI_FORMAT_BC7_UNORM;
+ 
+         /* These formats are known and explicitly unsupported on d3dx10+. */
+         case D3DX_PIXEL_FORMAT_U8V8W8Q8_SNORM:
+diff --git a/dlls/d3dx9_36/d3dx_helpers.c b/dlls/d3dx9_36/d3dx_helpers.c
+index c70dc3d1348..492a9526ff7 100644
+--- a/dlls/d3dx9_36/d3dx_helpers.c
++++ b/dlls/d3dx9_36/d3dx_helpers.c
+@@ -125,6 +125,7 @@ static const struct pixel_format_desc formats[] =
+     {D3DX_PIXEL_FORMAT_BC4_SNORM,                { 0,  0,  0,  0}, { 0,  0,  0,  0},  1, 4, 4,  8, CTYPE_EMPTY, CTYPE_SNORM, FMT_FLAG_DXT|FMT_FLAG_DXGI},
+     {D3DX_PIXEL_FORMAT_BC5_UNORM,                { 0,  0,  0,  0}, { 0,  0,  0,  0},  1, 4, 4, 16, CTYPE_EMPTY, CTYPE_UNORM, FMT_FLAG_DXT|FMT_FLAG_DXGI},
+     {D3DX_PIXEL_FORMAT_BC5_SNORM,                { 0,  0,  0,  0}, { 0,  0,  0,  0},  1, 4, 4, 16, CTYPE_EMPTY, CTYPE_SNORM, FMT_FLAG_DXT|FMT_FLAG_DXGI},
++    {D3DX_PIXEL_FORMAT_BC7_UNORM,                { 0,  0,  0,  0}, { 0,  0,  0,  0},  1, 4, 4, 16, CTYPE_UNORM, CTYPE_UNORM, FMT_FLAG_DXT|FMT_FLAG_DXGI},
+     {D3DX_PIXEL_FORMAT_R16_FLOAT,                { 0, 16,  0,  0}, { 0,  0,  0,  0},  2, 1, 1,  2, CTYPE_EMPTY, CTYPE_FLOAT, 0           },
+     {D3DX_PIXEL_FORMAT_R16G16_FLOAT,             { 0, 16, 16,  0}, { 0,  0, 16,  0},  4, 1, 1,  4, CTYPE_EMPTY, CTYPE_FLOAT, 0           },
+     {D3DX_PIXEL_FORMAT_R16G16B16A16_FLOAT,       {16, 16, 16, 16}, {48,  0, 16, 32},  8, 1, 1,  8, CTYPE_FLOAT, CTYPE_FLOAT, 0           },
+@@ -444,6 +445,7 @@ enum d3dx_pixel_format_id d3dx_pixel_format_id_from_dxgi_format(uint32_t format)
+         case DXGI_FORMAT_BC4_SNORM:                return D3DX_PIXEL_FORMAT_BC4_SNORM;
+         case DXGI_FORMAT_BC5_UNORM:                return D3DX_PIXEL_FORMAT_BC5_UNORM;
+         case DXGI_FORMAT_BC5_SNORM:                return D3DX_PIXEL_FORMAT_BC5_SNORM;
++        case DXGI_FORMAT_BC7_UNORM:                return D3DX_PIXEL_FORMAT_BC7_UNORM;
+         case DXGI_FORMAT_R8G8B8A8_SNORM:           return D3DX_PIXEL_FORMAT_R8G8B8A8_SNORM;
+         case DXGI_FORMAT_R8G8_SNORM:               return D3DX_PIXEL_FORMAT_R8G8_SNORM;
+         case DXGI_FORMAT_R16G16_SNORM:             return D3DX_PIXEL_FORMAT_R16G16_SNORM;
+@@ -2832,6 +2834,11 @@ static HRESULT d3dx_pixels_decompress(struct d3dx_pixels *pixels, const struct p
+             decompress_bcn_block = bcdec_bc5;
+             break;
+ 
++        case D3DX_PIXEL_FORMAT_BC7_UNORM:
++            uncompressed_desc = get_d3dx_pixel_format_info(D3DX_PIXEL_FORMAT_R8G8B8A8_UNORM);
++            decompress_bcn_block = bcdec_bc7;
++            break;
++
+ 
+         default:
+             FIXME("Unexpected compressed texture format %u.\n", desc->format);
+diff --git a/dlls/d3dx9_36/d3dx_helpers.h b/dlls/d3dx9_36/d3dx_helpers.h
+index a287915c685..e8872f6d954 100644
+--- a/dlls/d3dx9_36/d3dx_helpers.h
++++ b/dlls/d3dx9_36/d3dx_helpers.h
+@@ -206,6 +206,7 @@ enum d3dx_pixel_format_id
+     D3DX_PIXEL_FORMAT_BC4_SNORM,
+     D3DX_PIXEL_FORMAT_BC5_UNORM,
+     D3DX_PIXEL_FORMAT_BC5_SNORM,
++    D3DX_PIXEL_FORMAT_BC7_UNORM,
+     D3DX_PIXEL_FORMAT_R16_FLOAT,
+     D3DX_PIXEL_FORMAT_R16G16_FLOAT,
+     D3DX_PIXEL_FORMAT_R16G16B16A16_FLOAT,
