@@ -259,3 +259,4 @@
 0290-audio-mix-a-stream-of-more-than-two-channels-down-to.patch
 0291-audio-a-mixed-down-stream-keeps-its-level-and-no-NaN.patch
 0292-audio-a-mixed-down-stream-keeps-its-speakers-full-ga.patch
+0293-audio-each-stream-logs-what-fed-it-in-its-level-wind.patch

@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 20:36:33 +0800
+Subject: [PATCH] audio: each stream logs what fed it in its level window
+
+DRAGON QUEST VII Reimagined Demo's spatial audio stream got 10 % of real
+time after the in-game menu paused and resumed the title, and the phone
+played it in fragments; before the menu it got about 92 %. Its level
+line now has a flow line beside it: the timer's event signals, the
+GetBuffer calls answered and those refused as too large, Start and Stop
+calls, whether the stream and the endpoint run, and its padding. It is
+on in the release build, one line per stream every ten seconds.
+
+Class: diagnostic
+Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 7919984..6d402e4 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -311,6 +311,9 @@ struct ios_stream {
+     /* Playport: a stream of more than two channels mixes down to the stereo
+      * endpoint with these gains, from its channel mask (AUTOCONVERTPCM). */
+     float down_l[IOS_DOWNMIX_MAX], down_r[IOS_DOWNMIX_MAX];
++    /* what fed the stream in the current ml1065 window: the timer's event
++     * signals, GetBuffer answers (given, refused as too large), Start/Stop */
++    _Atomic uint32_t flow_events, flow_given, flow_full, flow_starts, flow_stops;
+     BYTE *ring;
+     _Atomic uint64_t write_pos;  /* frames produced by the game (monotonic) */
+     _Atomic uint64_t play_pos;   /* frames consumed by the RT callback */
+@@ -1489,8 +1492,10 @@ static void ios_timer_loop(void *arg) {
+     LOG_FN_CALL(9, "timer_loop");
+     while (s->valid) {
+         usleep(10000); /* device period, 10 ms */
+-        if (s->event && s->started)
++        if (s->event && s->started) {
+             NtSetEvent(s->event, NULL);
++            atomic_fetch_add_explicit(&s->flow_events, 1, memory_order_relaxed);
++        }
+     }
+ }
+ 
+@@ -1516,6 +1521,7 @@ static NTSTATUS ios_start(void *args) {
+     struct stream_handle_params *p = args;
+     struct ios_stream *s = stream_from_handle(p->stream);
+     if (!s) { p->result = AUDCLNT_E_NOT_INITIALIZED; return STATUS_SUCCESS; }
++    atomic_fetch_add_explicit(&s->flow_starts, 1, memory_order_relaxed);
+     if (!s->started) {
+         /* ml1026: started BEFORE the endpoint runs, so the first render pass
+          * already sees this client. */
+@@ -1536,6 +1542,7 @@ static NTSTATUS ios_stop(void *args) {
+     struct stream_handle_params *p = args;
+     struct ios_stream *s = stream_from_handle(p->stream);
+     if (!s) { p->result = AUDCLNT_E_NOT_INITIALIZED; return STATUS_SUCCESS; }
++    atomic_fetch_add_explicit(&s->flow_stops, 1, memory_order_relaxed);
+     if (s->started) {
+         s->accumulated_frames = elapsed_frames(s);
+         s->started = 0;
+@@ -1590,6 +1597,7 @@ static NTSTATUS ios_get_render_buffer(void *args) {
+         if (p->frames + padding > s->buffer_frames) {
+             p->result = (HRESULT)0x88890006L; /* AUDCLNT_E_BUFFER_TOO_LARGE */
+             if (p->data) *p->data = NULL;
++            atomic_fetch_add_explicit(&s->flow_full, 1, memory_order_relaxed);
+             return STATUS_SUCCESS;
+         }
+     }
+@@ -1603,6 +1611,7 @@ static NTSTATUS ios_get_render_buffer(void *args) {
+         }
+     }
+     s->pending_frames = p->frames;
++    atomic_fetch_add_explicit(&s->flow_given, 1, memory_order_relaxed);
+     if (p->data) *p->data = s->render_scratch;
+     p->result = S_OK;
+     if (producer) ios_audio_rt_cycle_start();
+@@ -1710,6 +1719,15 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                             len += snprintf(line + len, sizeof(line) - len, " %.3f%s", chs[slot].peak[c3],
+                                             chs[slot].nan[c3] ? "(NaN)" : "");
+                         fprintf(stderr, "[ios_audio] slot=%d channel peaks:%s\n", slot, line);
++                    }
++                    {
++                        uint64_t pad = wr + n - atomic_load_explicit(&s->play_pos, memory_order_relaxed);
++                        fprintf(stderr, "[ios_audio] slot=%d flow: events=%u getbuf=%u full=%u starts=%u stops=%u "
++                                "started=%d running=%d padding=%llu/%u\n", slot,
++                                atomic_exchange(&s->flow_events, 0), atomic_exchange(&s->flow_given, 0),
++                                atomic_exchange(&s->flow_full, 0), atomic_exchange(&s->flow_starts, 0),
++                                atomic_exchange(&s->flow_stops, 0), s->started, g_dev.running,
++                                (unsigned long long)pad, s->buffer_frames);
+                         memset(&chs[slot], 0, sizeof(chs[slot]));
+                     }
+                     st[slot].frames = 0; st[slot].sum_abs = 0; st[slot].peak = 0; st[slot].clip = 0; st[slot].last = time(NULL);
