@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 21:16:49 +0800
+Subject: [PATCH] audio: Reset leaves a running stream running
+
+Reset stopped the stream and zeroed its positions whatever its state.
+WASAPI allows it only on a stopped stream with no buffer out, and every
+Wine driver answers AUDCLNT_E_NOT_STOPPED or
+AUDCLNT_E_BUFFER_OPERATION_PENDING otherwise. DRAGON QUEST VII
+Reimagined Demo resets its spatial audio stream after the in-game menu
+held the title (its audio clock stalled); the stream stayed started on
+the client's side, the driver stopped mixing it and its timer signalled
+no more events, and the game rendered one period about every 100 ms on
+its own timeout: a tenth of the sound. Each flow line also counts the
+Reset calls.
+
+Class: fix
+Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 7d25d7a..5a7d684 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -313,7 +313,7 @@ struct ios_stream {
+     float down_l[IOS_DOWNMIX_MAX], down_r[IOS_DOWNMIX_MAX];
+     /* what fed the stream in the current ml1065 window: the timer's event
+      * signals, GetBuffer answers (given, refused as too large), Start/Stop */
+-    _Atomic uint32_t flow_events, flow_given, flow_full, flow_starts, flow_stops;
++    _Atomic uint32_t flow_events, flow_given, flow_full, flow_starts, flow_stops, flow_resets;
+     BYTE *ring;
+     _Atomic uint64_t write_pos;  /* frames produced by the game (monotonic) */
+     _Atomic uint64_t play_pos;   /* frames consumed by the RT callback */
+@@ -1568,7 +1568,13 @@ static NTSTATUS ios_reset(void *args) {
+     struct stream_handle_params *p = args;
+     struct ios_stream *s = stream_from_handle(p->stream);
+     if (!s) { p->result = AUDCLNT_E_NOT_INITIALIZED; return STATUS_SUCCESS; }
+-    s->started = 0;
++    atomic_fetch_add_explicit(&s->flow_resets, 1, memory_order_relaxed);
++    /* Reset is legal only on a stopped stream with no buffer out, as every
++     * Wine driver answers: a running stream stays running. Stopping it here
++     * left the client's stream started on its side and silent on ours, its
++     * timer's events off. */
++    if (s->started) { p->result = (HRESULT)0x88890011L; return STATUS_SUCCESS; }  /* AUDCLNT_E_NOT_STOPPED */
++    if (s->pending_frames) { p->result = (HRESULT)0x8889000BL; return STATUS_SUCCESS; }  /* AUDCLNT_E_BUFFER_OPERATION_PENDING */
+     s->accumulated_frames = 0;
+     s->start_mach = 0;
+     /* Drop queued-but-unplayed audio (only legal while stopped). */
+@@ -1733,11 +1739,11 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                     }
+                     {
+                         uint64_t pad = wr + n - atomic_load_explicit(&s->play_pos, memory_order_relaxed);
+-                        fprintf(stderr, "[ios_audio] slot=%d flow: events=%u getbuf=%u full=%u starts=%u stops=%u "
++                        fprintf(stderr, "[ios_audio] slot=%d flow: events=%u getbuf=%u full=%u starts=%u stops=%u resets=%u "
+                                 "started=%d running=%d padding=%llu/%u\n", slot,
+                                 atomic_exchange(&s->flow_events, 0), atomic_exchange(&s->flow_given, 0),
+                                 atomic_exchange(&s->flow_full, 0), atomic_exchange(&s->flow_starts, 0),
+-                                atomic_exchange(&s->flow_stops, 0), s->started, g_dev.running,
++                                atomic_exchange(&s->flow_stops, 0), atomic_exchange(&s->flow_resets, 0), s->started, g_dev.running,
+                                 (unsigned long long)pad, s->buffer_frames);
+                         memset(&chs[slot], 0, sizeof(chs[slot]));
+                     }

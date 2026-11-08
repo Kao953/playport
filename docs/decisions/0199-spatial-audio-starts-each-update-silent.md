@@ -28,6 +28,12 @@ before the objects are mixed into it.
   renders one period per wake. `0294` has the timer wait for each period's deadline on the Mach
   clock, starting the clock again after a wake more than four periods late.
 
+- The sound still dropped to a tenth after the in-game menu held the title. The flow line showed
+  the spatial stream `started=0` with no Stop and its timer's events at 0: the game resets the
+  stream after the hold, and the driver's Reset stopped a running stream. `0295` answers
+  `AUDCLNT_E_NOT_STOPPED` (or `AUDCLNT_E_BUFFER_OPERATION_PENDING`) as every Wine driver does,
+  and the flow line counts resets.
+
 ## Consequences
 
 A game rendering through spatial audio static objects is heard as it renders, whatever its driver
