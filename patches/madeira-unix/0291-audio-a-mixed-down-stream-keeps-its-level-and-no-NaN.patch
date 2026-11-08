@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 18:25:52 +0800
+Subject: [PATCH] audio: a mixed-down stream keeps its level and no NaN reaches
+ the speaker
+
+Dragon Quest VII Reimagined Demo (2499870) plays a 12-channel float
+stream; mixed down at the full gains of every speaker, its channels add
+up to several times full scale on each side, and the player heard loud
+constant noise. The downmix gains are now scaled so that uncorrelated
+channels keep the level of one full-scale channel, each input sample is
+clamped to full scale, and a NaN or infinity, in a mixed-down sample or
+in the final mix, becomes silence instead of passing the clamp. Each
+stream of more than two channels logs its channels' peaks and NaNs with
+its level line.
+
+Class: fix
+Evidence: docs/decisions/0198-audio-mixes-down-multichannel-streams.md
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 42 +++++++++++++++++++++++++++++--
+ 1 file changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 1b7b1cb..3f3a265 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -528,6 +528,14 @@ static uint64_t elapsed_frames(const struct ios_stream *s) {
+ #define IOS_REFILL_MAX_CALLBACKS 3u
+ static int g_refill_on = 1;        /* read once at process attach */
+ 
++/* NaN or infinity, by its bits, so no floating-point mode can fold the test away */
++static inline int ios_not_finite(float x)
++{
++    uint32_t u;
++    memcpy(&u, &x, sizeof(u));
++    return (u & 0x7f800000u) == 0x7f800000u;
++}
++
+ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+                            UINT32 dev_ch, UINT32 dev_rate)
+ {
+@@ -592,6 +600,9 @@ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+                 if (s->is_float) x = ((const float *)fr)[c];
+                 else if (s->sample_bits == 16) x = (float)((const int16_t *)fr)[c] * (1.0f / 32768.0f);
+                 else x = (float)((const int32_t *)fr)[c] * (1.0f / 2147483648.0f);
++                if (ios_not_finite(x)) x = 0;       /* NaN or infinity carries no sound */
++                else if (x > 1.0f) x = 1.0f;
++                else if (x < -1.0f) x = -1.0f;
+                 l += x * s->down_l[c];
+                 r += x * s->down_r[c];
+             }
+@@ -647,7 +658,8 @@ static OSStatus ios_audio_render_cb(void *refcon, AudioUnitRenderActionFlags *fl
+     /* Summing independent clients can exceed full scale; clamp rather than
+      * letting it wrap into noise. */
+     for (k = 0; k < total; k++) {
+-        if (out[k] > 1.0f) out[k] = 1.0f;
++        if (ios_not_finite(out[k])) out[k] = 0;   /* a NaN would reach the speaker as noise */
++        else if (out[k] > 1.0f) out[k] = 1.0f;
+         else if (out[k] < -1.0f) out[k] = -1.0f;
+     }
+     atomic_fetch_add_explicit(&g_dev.cb_epoch, 1, memory_order_release);
+@@ -755,6 +767,7 @@ static void ios_downmix_gains(struct ios_stream *s, const struct WAVEFORMATEX_st
+         {0.5f, 0}, {0.35f, 0.35f}, {0, 0.5f}, /* TBL TBC TBR */
+     };
+     UINT32 mask = 0, ch, bit;
++    float pl = 0, pr = 0, norm;
+ 
+     for (ch = 0; ch < IOS_DOWNMIX_MAX; ch++) s->down_l[ch] = s->down_r[ch] = 0;
+     if (fmt && fmt->wFormatTag == 0xFFFE && fmt->cbSize >= 22)
+@@ -777,9 +790,17 @@ static void ios_downmix_gains(struct ios_stream *s, const struct WAVEFORMATEX_st
+         if (!(mask & (1u << bit))) continue;
+         s->down_l[ch] = pos[bit][0];
+         s->down_r[ch] = pos[bit][1];
++        pl += pos[bit][0] * pos[bit][0];
++        pr += pos[bit][1] * pos[bit][1];
+         ch++;
+     }
+-    fprintf(stderr, "[ios_audio] %u-channel stream (mask %#x) mixed down to stereo\n", s->channels, mask);
++    /* Every channel at full scale would add up to several times full scale on
++     * each side, which clips into noise: scale so that uncorrelated channels
++     * keep the loudness of one full-scale channel. */
++    if (pr > pl) pl = pr;
++    norm = pl > 1.0f ? 1.0f / __builtin_sqrtf(pl) : 1.0f;
++    for (ch = 0; ch < IOS_DOWNMIX_MAX; ch++) { s->down_l[ch] *= norm; s->down_r[ch] *= norm; }
++    fprintf(stderr, "[ios_audio] %u-channel stream (mask %#x) mixed down to stereo (gain %.2f)\n", s->channels, mask, norm);
+ }
+ 
+ /* Describe this stream's ring for the mixer and publish it. Failure leaves the
+@@ -1627,6 +1648,8 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                             /* Playport (PLA-364): this window's frames written, its start, its longest
+                              * gap between two ReleaseBuffers, and the underrun counts at its start */
+                             const void *owner; uint64_t written, start_mach, max_gap_mach, cbs, shorts, under, switches; } st[IOS_MAX_STREAMS];
++            /* each channel's peak and NaN count, for a stream of more than two channels */
++            static struct { float peak[IOS_DOWNMIX_MAX]; uint32_t nan[IOS_DOWNMIX_MAX]; } chs[IOS_MAX_STREAMS];
+             int slot = -1, si;
+             uint64_t now_mach = mach_absolute_time();
+             for (si = 0; si < IOS_MAX_STREAMS; si++) if (atomic_load_explicit(&g_mix[si], memory_order_relaxed) == s) { slot = si; break; }
+@@ -1645,6 +1668,13 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                 UINT32 f2, c2, step = n > 4096 ? n / 4096 : 1;
+                 for (f2 = 0; f2 < n; f2 += step) {
+                     const BYTE *fr = s->render_scratch + (size_t)f2 * fb;
++                    for (c2 = 0; c2 < s->channels && c2 < IOS_DOWNMIX_MAX; c2++) {
++                        float v2 = s->is_float ? ((const float *)fr)[c2]
++                                 : s->sample_bits == 16 ? ((const int16_t *)fr)[c2] * (1.0f / 32768.0f)
++                                 : ((const int32_t *)fr)[c2] * (1.0f / 2147483648.0f);
++                        if (ios_not_finite(v2)) chs[slot].nan[c2]++;
++                        else { float a2 = v2 < 0 ? -v2 : v2; if (a2 > chs[slot].peak[c2]) chs[slot].peak[c2] = a2; }
++                    }
+                     for (c2 = 0; c2 < s->channels && c2 < 2; c2++) {
+                         float v = s->is_float ? ((const float *)fr)[c2]
+                                 : s->sample_bits == 16 ? ((const int16_t *)fr)[c2] * (1.0f / 32768.0f)
+@@ -1683,6 +1713,14 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                     fprintf(stderr, "[ios_audio] ml1065 slot=%d source: %llu samples, mean|x|=%.4f peak=%.3f clipped=%llu (rate %u ch %u float=%d bits=%d)%s\n",
+                             slot, (unsigned long long)st[slot].frames, st[slot].sum_abs / (double)st[slot].frames, st[slot].peak,
+                             (unsigned long long)st[slot].clip, s->sample_rate, s->channels, s->is_float, s->sample_bits, under);
++                    if (s->channels > 2) {
++                        char line[512]; int len = 0; UINT32 c3;
++                        for (c3 = 0; c3 < s->channels && c3 < IOS_DOWNMIX_MAX && len < (int)sizeof(line) - 32; c3++)
++                            len += snprintf(line + len, sizeof(line) - len, " %.3f%s", chs[slot].peak[c3],
++                                            chs[slot].nan[c3] ? "(NaN)" : "");
++                        fprintf(stderr, "[ios_audio] slot=%d channel peaks:%s\n", slot, line);
++                        memset(&chs[slot], 0, sizeof(chs[slot]));
++                    }
+                     st[slot].frames = 0; st[slot].sum_abs = 0; st[slot].peak = 0; st[slot].clip = 0; st[slot].last = time(NULL);
+                     st[slot].written = 0; st[slot].start_mach = now_mach; st[slot].max_gap_mach = 0;
+                     st[slot].cbs = cbs; st[slot].shorts = shorts; st[slot].under = missing; st[slot].switches = switches;
