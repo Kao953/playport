@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 19:36:59 +0800
+Subject: [PATCH] audio: a mixed-down stream keeps its speakers' full gains
+
+0291 scaled a mixed-down stream's gains so uncorrelated channels kept
+one channel's level (0.55 for 7.1.4), on the guess that the noise
+Dragon Quest VII Reimagined Demo played came from summing its channels.
+Its channel peaks showed sound in the front pair only, already noise
+before the mix: the noise was made upstream, in the spatial audio
+mixer. The scaling only made a surround stream quieter than Windows
+plays it; the per-sample clamp, the NaN guard and the channel peaks
+stay.
+
+Class: fix
+Evidence: docs/decisions/0198-audio-mixes-down-multichannel-streams.md
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 11 +----------
+ 1 file changed, 1 insertion(+), 10 deletions(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 3f3a265..7919984 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -767,7 +767,6 @@ static void ios_downmix_gains(struct ios_stream *s, const struct WAVEFORMATEX_st
+         {0.5f, 0}, {0.35f, 0.35f}, {0, 0.5f}, /* TBL TBC TBR */
+     };
+     UINT32 mask = 0, ch, bit;
+-    float pl = 0, pr = 0, norm;
+ 
+     for (ch = 0; ch < IOS_DOWNMIX_MAX; ch++) s->down_l[ch] = s->down_r[ch] = 0;
+     if (fmt && fmt->wFormatTag == 0xFFFE && fmt->cbSize >= 22)
+@@ -790,17 +789,9 @@ static void ios_downmix_gains(struct ios_stream *s, const struct WAVEFORMATEX_st
+         if (!(mask & (1u << bit))) continue;
+         s->down_l[ch] = pos[bit][0];
+         s->down_r[ch] = pos[bit][1];
+-        pl += pos[bit][0] * pos[bit][0];
+-        pr += pos[bit][1] * pos[bit][1];
+         ch++;
+     }
+-    /* Every channel at full scale would add up to several times full scale on
+-     * each side, which clips into noise: scale so that uncorrelated channels
+-     * keep the loudness of one full-scale channel. */
+-    if (pr > pl) pl = pr;
+-    norm = pl > 1.0f ? 1.0f / __builtin_sqrtf(pl) : 1.0f;
+-    for (ch = 0; ch < IOS_DOWNMIX_MAX; ch++) { s->down_l[ch] *= norm; s->down_r[ch] *= norm; }
+-    fprintf(stderr, "[ios_audio] %u-channel stream (mask %#x) mixed down to stereo (gain %.2f)\n", s->channels, mask, norm);
++    fprintf(stderr, "[ios_audio] %u-channel stream (mask %#x) mixed down to stereo\n", s->channels, mask);
+ }
+ 
+ /* Describe this stream's ring for the mixer and publish it. Failure leaves the

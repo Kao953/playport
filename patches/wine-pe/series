@@ -67,3 +67,4 @@
 0068-d3dx-load-BC7-textures.patch
 0069-d3dx11-report-which-step-of-a-texture-load-fails.patch
 0070-d3dx10-d3dx11-map-BC7-in-the-DX10-header-path.patch
+0071-mmdevapi-start-each-spatial-audio-update-from-a-sile.patch

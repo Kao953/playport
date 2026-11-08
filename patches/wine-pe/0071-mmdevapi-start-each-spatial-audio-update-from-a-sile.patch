@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 19:36:49 +0800
+Subject: [PATCH] mmdevapi: start each spatial audio update from a silent
+ buffer
+
+The static objects are added into the render buffer GetBuffer returns,
+and that buffer holds whatever the driver left in it: a driver that
+hands back the same area each period (the iOS one does, as Windows
+allows) had every period added onto the last. DRAGON QUEST VII
+Reimagined Demo (2499870) renders through a 7.1.4 static bed, and the
+phone played loud noise that grew to five times full scale within
+twenty seconds.
+
+Class: fix
+Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
+Offered-upstream: no
+---
+ dlls/mmdevapi/spatialaudio.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/dlls/mmdevapi/spatialaudio.c b/dlls/mmdevapi/spatialaudio.c
+index 864b33136e6..e348b9d6252 100644
+--- a/dlls/mmdevapi/spatialaudio.c
++++ b/dlls/mmdevapi/spatialaudio.c
+@@ -417,6 +417,10 @@ static HRESULT WINAPI SAORS_BeginUpdatingAudioObjects(ISpatialAudioObjectRenderS
+             return hr;
+         }
+ 
++        /* The static objects are added into this buffer, and GetBuffer hands it
++         * over with whatever it held before: start it silent. */
++        memset(This->buf, 0, This->update_frames * This->stream_fmtex.Format.nBlockAlign);
++
+         LIST_FOR_EACH_ENTRY(object, &This->objects, SpatialAudioObjectImpl, entry){
+             memset(object->buf, 0, This->update_frames * This->sa_client->object_fmtex.Format.nBlockAlign);
+         }

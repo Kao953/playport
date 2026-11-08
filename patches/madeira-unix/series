@@ -258,3 +258,4 @@
 0289-ntdll-iOS-an-i386-caller-of-winegstreamer-gets-its-W.patch
 0290-audio-mix-a-stream-of-more-than-two-channels-down-to.patch
 0291-audio-a-mixed-down-stream-keeps-its-level-and-no-NaN.patch
+0292-audio-a-mixed-down-stream-keeps-its-speakers-full-ga.patch

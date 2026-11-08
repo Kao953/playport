@@ -197,3 +197,4 @@ supersedes it.
 | [0196](0196-one-play-starts-at-a-time.md) | A Play is refused while another is still starting: a double tap had the second Play replace the first's tickets, and the CM closed before the game (amends 0062, 0193) |
 | [0197](0197-steam-client-answers-current-stats.md) | Playport's Steam client answers RequestCurrentStats and posts UserStatsReceived_t, with no stats set (DRAGON QUEST VII Reimagined Demo waited for it on its loading screen) |
 | [0198](0198-audio-mixes-down-multichannel-streams.md) | The iOS audio driver mixes a stream of more than two channels down to stereo by its channel mask (a 7.1.4 Unreal game was silent) |
+| [0199](0199-spatial-audio-starts-each-update-silent.md) | Wine's spatial audio stream clears its render buffer before mixing static objects into it (a 7.1.4 static bed piled each period onto the last into noise) |
