@@ -79,6 +79,7 @@ private struct GameDetailPage: View {
     @ObservedObject private var epic = EpicAccount.shared
     @ObservedObject private var bnet = BattleNetStore.shared
     @ObservedObject private var bnetInstalled = BattleNetInstalled.shared
+    @ObservedObject private var mods = ModInstalls.shared
     @State private var playError: String?
     @State private var controllers = GCController.controllers().count
     @State private var stageOnDisk = false
@@ -504,7 +505,7 @@ private struct GameDetailPage: View {
     }
 
     private func canPlay(_ t: InstalledTitle) -> Bool {
-        t.canPlay && !launch.spent && !launch.running && !library.verifying.contains(t.id)
+        t.canPlay && !launch.spent && !launch.running && !library.verifying.contains(t.id) && mods.busy != t.installDir
             && !library.removing.contains(t.id) && job == nil
     }
 
@@ -1132,6 +1133,33 @@ private struct GameDetailPage: View {
             PadRow(id: "opt:repair", title: "Repair from GOG", subtitle: "Downloads the damaged files again",
                    accessory: .chevron, style: .plain, hint: "Repair") {
                 if !installs.suspended, !launch.running { gog.install(t.key.id, name: t.name, kind: .repair) }
+            }
+        }
+        modRows(t)
+    }
+
+    /// Install a mod / Remove mods (UI/ModInstalls.swift, decision 0200).
+    @ViewBuilder
+    private func modRows(_ t: InstalledTitle) -> some View {
+        let modding = mods.busy == t.installDir
+        let manifest = mods.manifest(t.installDir)
+        PadRow(id: "opt:mod-install", title: modding ? "Changing mods…" : "Install a mod",
+               subtitle: modding ? mods.status : "Merges mod folders or .zips into the game's folder; the game's own files are kept to put back",
+               value: manifest.map { "\($0.mods.count) installed" }, accessory: .chevron, style: .plain, hint: "Pick") {
+            guard !launch.running, job == nil, mods.busy == nil else { return }
+            mods.request(folder: t.installDir, name: t.name)
+        }
+        if let manifest, !modding {
+            PadRow(id: "opt:mod-remove", title: "Remove mods", subtitle: manifest.mods.joined(separator: ", "),
+                   destructive: true, style: .plain, hint: "Remove") {
+                guard !launch.running, job == nil, mods.busy == nil else { return }
+                PadModal.shared.picker(
+                    title: "Remove mods from \(t.name)?", context: context,
+                    note: "Puts back the \(manifest.originals.count) game files the mods replaced and deletes the \(manifest.added.count) files they added.",
+                    options: [PadOption(id: "remove", label: "Remove mods"), PadOption(id: "cancel", label: "Cancel")],
+                    selected: "cancel") { choice in
+                    if choice == "remove" { mods.remove(folder: t.installDir, name: t.name) }
+                }
             }
         }
     }

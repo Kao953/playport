@@ -45,6 +45,8 @@ struct AppShell: View {
     @State private var importing = false
     /// What the one Files picker is open for: a pairing file, or a game (UI/Import.swift).
     @State private var importingGame = false
+    /// ... or mods for a game's folder (UI/ModInstalls.swift), several at once.
+    @State private var importingMod = false
     @ObservedObject private var gog = GOGAccount.shared
     @ObservedObject private var epic = EpicAccount.shared
     @ObservedObject private var layoutEditor = LayoutEditorSession.shared
@@ -114,7 +116,17 @@ struct AppShell: View {
         // game to import (Library › Add a game): touch only, as Files is. One picker for both:
         // SwiftUI presents only one fileImporter per hierarchy reliably.
         .fileImporter(isPresented: $importing,
-                      allowedContentTypes: importingGame ? GameImports.contentTypes : [.propertyList, .xml, .data]) { result in
+                      allowedContentTypes: importingMod ? ModInstalls.contentTypes
+                          : importingGame ? GameImports.contentTypes : [.propertyList, .xml, .data],
+                      allowsMultipleSelection: importingMod) { results in
+            if importingMod {
+                if case let .success(urls) = results { ModInstalls.shared.picked(urls) }
+                return
+            }
+            let result: Result<URL, Error> = results.flatMap { urls -> Result<URL, Error> in
+                if let url = urls.first { return .success(url) }
+                return .failure(CocoaError(.userCancelled))
+            }
             if importingGame {
                 guard case let .success(url) = result else { return }
                 Task {
@@ -129,6 +141,7 @@ struct AppShell: View {
         }
         .onReceive(SettingsImport.requests) {
             importingGame = false
+            importingMod = false
             importing = true
         }
         // GOG's and Epic's sign-in pages (touch: a web page, as iOS draws it; decision 0058).
@@ -136,6 +149,12 @@ struct AppShell: View {
         .sheet(isPresented: $epic.signingIn) { EpicSignInSheet() }
         .onReceive(GameImports.requests) {
             importingGame = true
+            importingMod = false
+            importing = true
+        }
+        .onReceive(ModInstalls.requests) {
+            importingGame = false
+            importingMod = true
             importing = true
         }
         .environmentObject(model)
