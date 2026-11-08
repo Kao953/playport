@@ -256,3 +256,4 @@
 0287-ntdll-a-WoW64-commit-reports-the-Wine-pages-it-commi.patch
 0288-win32u-the-guest-windows-get-each-surface-s-shape-a-.patch
 0289-ntdll-iOS-an-i386-caller-of-winegstreamer-gets-its-W.patch
+0290-audio-mix-a-stream-of-more-than-two-channels-down-to.patch

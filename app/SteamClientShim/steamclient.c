@@ -141,6 +141,7 @@ static void hello(void) { InitOnceExecuteOnce(&hello_once, say_hello, NULL, NULL
 #define CB_WEB_API_TICKET 168        /* GetTicketForWebApiResponse_t */
 #define CB_ENCRYPTED_APP_TICKET 154  /* EncryptedAppTicketResponse_t */
 #define CB_CALL_COMPLETED 703        /* SteamAPICallCompleted_t */
+#define CB_USER_STATS_RECEIVED 1101  /* UserStatsReceived_t */
 #define ER_OK 1
 #define ER_FAIL 2
 #define ER_NO_CONNECTION 3
@@ -157,6 +158,8 @@ static uint32_t app_ticket_size;
 static uint8_t current[16 + PP_SC_DATA_MAX];
 static int holding;
 static int32_t pipes;
+/* RequestCurrentStats asked: its UserStatsReceived_t is due (decision 0197). */
+static volatile LONG stats_due;
 
 /* An at-once call result: SteamAPICallCompleted_t first, then its bytes (up to 32). The call
  * handle is known before the bytes, which may name it: `fill` writes them given the handle. */
@@ -182,6 +185,8 @@ static uint64_t result_now(int32_t callback, int32_t eresult)
 {
     return result_with(callback, 4, fill_eresult, &eresult);
 }
+
+static uint64_t app_id(void);
 
 static int next_callback(callback_msg *msg)
 {
@@ -211,6 +216,21 @@ static int next_callback(callback_msg *msg)
             msg->size = 8;
         }
         tickets[i].handle = 0;
+        holding = 1;
+        return 1;
+    }
+    if (InterlockedExchange(&stats_due, 0)) {
+        /* UserStatsReceived_t: m_nGameID, m_eResult, (pad), m_steamIDUser */
+        uint64_t game = app_id(), user = snapshot.steam_id;
+        int32_t eresult = ER_OK;
+        memset(current, 0, sizeof(current));
+        memcpy(current, &game, 8);
+        memcpy(current + 8, &eresult, 4);
+        memcpy(current + 16, &user, 8);
+        msg->user = 1;
+        msg->callback = CB_USER_STATS_RECEIVED;
+        msg->param = current;
+        msg->size = 24;
         holding = 1;
         return 1;
     }
@@ -1305,6 +1325,17 @@ static uint8_t rs_stream_end(uint64_t handle, int write)
 static uint8_t rs_FileWriteStreamClose(iface *self, uint64_t handle) { (void)self; return rs_stream_end(handle, 1); }
 static uint8_t rs_FileWriteStreamCancel(iface *self, uint64_t handle) { (void)self; return rs_stream_end(handle, 0); }
 
+/* The current user's stats, as a game asks before it reads them (decision 0197): received at
+ * once, with none set (a stat or achievement read still answers false). DRAGON QUEST VII
+ * Reimagined Demo, an Unreal game, holds its loading screen until UserStatsReceived_t. */
+static uint8_t stats_RequestCurrentStats(iface *self)
+{
+    (void)self;
+    if (!snapshot.armed || !snapshot.logged_on) return 0;
+    InterlockedExchange(&stats_due, 1);
+    return 1;
+}
+
 static const struct { const char *family, *method; void *fn; } served[] = {
     { "ISteamClient", "CreateSteamPipe", (void *)client_CreateSteamPipe },
     { "ISteamClient", "BReleaseSteamPipe", (void *)client_BReleaseSteamPipe },
@@ -1368,6 +1399,7 @@ static const struct { const char *family, *method; void *fn; } served[] = {
     { "ISteamApps", "BIsSubscribedFromFamilySharing", (void *)client_false },
     { "ISteamApps", "BIsTimedTrial", (void *)client_false },
     { "ISteamFriends", "GetPersonaName", (void *)friends_GetPersonaName },
+    { "ISteamUserStats", "RequestCurrentStats", (void *)stats_RequestCurrentStats },
     { "ISteamFriends", "GetPersonaState", (void *)friends_GetPersonaState },
     { "ISteamFriends", "GetFriendCount", (void *)client_false },
     { "ISteamFriends", "GetFriendPersonaName", (void *)friends_GetFriendPersonaName },

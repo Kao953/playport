@@ -1,0 +1,129 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 16:19:15 +0800
+Subject: [PATCH] audio: mix a stream of more than two channels down to stereo
+
+A stream opened with more channels than the stereo endpoint (the
+client asks AUTOCONVERTPCM, so Windows' engine mixes it down) had only
+its first two channels played. DRAGON QUEST VII Reimagined Demo
+(2499870, Unreal Engine) renders 12 channels (7.1.4) and was silent on
+the phone although its stream carried audio (peaks up to 2.3).
+
+Such a stream now gets per-channel stereo gains from its channel mask,
+or the usual layout for its channel count: a front, side or back
+speaker goes to its side (0.707 off the front), a centre one to both at
+0.707, LFE is left out. Mono and stereo streams mix as before.
+
+Class: ios-port
+Evidence: DRAGON QUEST VII Reimagined Demo log of 2026-11-08: "create_stream ... ch=12" then "slot=0 source: ... peak=2.266" with no sound on the phone.
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 66 ++++++++++++++++++++++++++++++-
+ 1 file changed, 65 insertions(+), 1 deletion(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index a85a24a..1b7b1cb 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -95,6 +95,8 @@ struct get_endpoint_ids_params {
+     unsigned int default_idx;
+ };
+ 
++#define IOS_DOWNMIX_MAX 18   /* the speaker positions a channel mask names */
++
+ struct WAVEFORMATEX_stub {
+     WORD wFormatTag;
+     WORD nChannels;
+@@ -306,6 +308,9 @@ struct ios_stream {
+     int is_float;                /* ring holds float32 (else signed integer) */
+     int sample_bits;             /* bits per channel in the ring */
+     int mixable;                 /* format understood by the mixer */
++    /* Playport: a stream of more than two channels mixes down to the stereo
++     * endpoint with these gains, from its channel mask (AUTOCONVERTPCM). */
++    float down_l[IOS_DOWNMIX_MAX], down_r[IOS_DOWNMIX_MAX];
+     BYTE *ring;
+     _Atomic uint64_t write_pos;  /* frames produced by the game (monotonic) */
+     _Atomic uint64_t play_pos;   /* frames consumed by the RT callback */
+@@ -579,7 +584,18 @@ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+         if (sidx >= need) break;
+         fr = s->ring + (size_t)((play + sidx) % cap) * fb;
+ 
+-        if (s->is_float) {
++        if (sch > 2) {
++            UINT32 c, n = sch < IOS_DOWNMIX_MAX ? sch : IOS_DOWNMIX_MAX;
++            l = r = 0;
++            for (c = 0; c < n; c++) {
++                float x;
++                if (s->is_float) x = ((const float *)fr)[c];
++                else if (s->sample_bits == 16) x = (float)((const int16_t *)fr)[c] * (1.0f / 32768.0f);
++                else x = (float)((const int32_t *)fr)[c] * (1.0f / 2147483648.0f);
++                l += x * s->down_l[c];
++                r += x * s->down_r[c];
++            }
++        } else if (s->is_float) {
+             const float *v = (const float *)fr;
+             l = v[0]; r = sch > 1 ? v[1] : v[0];
+         } else if (s->sample_bits == 16) {
+@@ -719,6 +735,53 @@ fail:
+     return -1;
+ }
+ 
++/* Playport: the stereo gains of each channel of a stream of more than two
++ * channels, as Windows' shared-mode engine mixes one down (AUTOCONVERTPCM):
++ * a front, side or back speaker goes to its side, at 0.707 off the front; a
++ * centre one to both at 0.707; LFE is left out. Without a WAVEFORMATEXTENSIBLE
++ * mask the channels follow the usual layouts (5.1, 7.1, 7.1.4). */
++static void ios_downmix_gains(struct ios_stream *s, const struct WAVEFORMATEX_stub *fmt)
++{
++    static const float g = 0.7071f;
++    /* per speaker bit: left gain, right gain */
++    static const float pos[IOS_DOWNMIX_MAX][2] = {
++        {1, 0}, {0, 1}, {g, g}, {0, 0},   /* FL FR FC LFE */
++        {g, 0}, {0, g},                   /* BL BR */
++        {1, 0}, {0, 1},                   /* FLC FRC */
++        {0.5f, 0.5f},                     /* BC */
++        {g, 0}, {0, g},                   /* SL SR */
++        {0.5f, 0.5f},                     /* TC */
++        {g, 0}, {0.5f, 0.5f}, {0, g},     /* TFL TFC TFR */
++        {0.5f, 0}, {0.35f, 0.35f}, {0, 0.5f}, /* TBL TBC TBR */
++    };
++    UINT32 mask = 0, ch, bit;
++
++    for (ch = 0; ch < IOS_DOWNMIX_MAX; ch++) s->down_l[ch] = s->down_r[ch] = 0;
++    if (fmt && fmt->wFormatTag == 0xFFFE && fmt->cbSize >= 22)
++        memcpy(&mask, (const char *)fmt + 20, sizeof(mask));
++    if (!mask || __builtin_popcount(mask) < (int)s->channels) {
++        switch (s->channels) {
++        case 3:  mask = 0x7; break;
++        case 4:  mask = 0x33; break;
++        case 5:  mask = 0x37; break;
++        case 6:  mask = 0x3f; break;
++        case 7:  mask = 0x13f; break;
++        case 8:  mask = 0x63f; break;
++        case 10: mask = 0x563f; break;
++        case 12: mask = 0x2d63f; break;
++        default: mask = (1u << (s->channels < IOS_DOWNMIX_MAX ? s->channels : IOS_DOWNMIX_MAX)) - 1; break;
++        }
++    }
++    /* the channels come in speaker-bit order; channels past the mask stay silent */
++    for (ch = 0, bit = 0; ch < s->channels && ch < IOS_DOWNMIX_MAX && bit < IOS_DOWNMIX_MAX; bit++) {
++        if (!(mask & (1u << bit))) continue;
++        s->down_l[ch] = pos[bit][0];
++        s->down_r[ch] = pos[bit][1];
++        ch++;
++    }
++    fprintf(stderr, "[ios_audio] %u-channel stream (mask %#x) mixed down to stereo\n", s->channels, mask);
++}
++
+ /* Describe this stream's ring for the mixer and publish it. Failure leaves the
+  * stream unmixed, which is the pre-existing null-mode behaviour: the position
+  * clock still runs off the wall clock, so the game keeps making progress. */
+@@ -737,6 +800,7 @@ static int ios_dev_attach(struct ios_stream *s, const struct WAVEFORMATEX_stub *
+                 s->sample_rate, s->channels, s->frame_bytes, s->is_float, bits);
+         return -1;
+     }
++    if (s->channels > 2) ios_downmix_gains(s, fmt);
+ 
+     pthread_mutex_lock(&g_dev_lock);
+     if (ios_dev_create_locked(s)) { pthread_mutex_unlock(&g_dev_lock); return -1; }
