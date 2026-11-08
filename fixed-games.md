@@ -11,7 +11,7 @@
 | 遊戲 | Steam App ID | 狀態 | 相關決策 |
 | --- | --- | --- | --- |
 | CHRONO TRIGGER | 613830 | 可玩 | 0183、0184、0186、0187 |
-| Resident Evil HD REMASTER | 304240 | 可進遊戲，約 216 秒後當機（未解） | 0188、0189 |
+| Resident Evil HD REMASTER | 304240 | 可玩，MOD 正常（日文語音，2026-11-08 確認） | 0188、0189、0200 |
 | Guilty Gear XX Accent Core Plus R | 348550 | 可玩，存檔正常 | 0190、0192 |
 | Mega Man 11 | 742300 | 可玩，存檔正常 | 0192 |
 | Mega Man Legacy Collection 2 | 495050 | 可玩 | 0193、0194、0196 |
@@ -59,7 +59,13 @@
 - 修法：32 位元遊戲也能使用 winegstreamer 的呼叫表，並註冊 asf 解碼器以播放 WMV 影片。
 - 決策 0189，commit `3ad65b9f`、`7f1619f8`。
 
-**尚未解決**：進入遊戲約 216 秒後當機。
+**3. 裝 MOD 後啟動時跳出「Fatal error.」**
+- 原因：MOD 是從 Mac 複製進來的。Finder 和「檔案」App 遇到同名資料夾會整個取代，不會合併，所以遊戲原本的 `nativePC/arcPC/id/` 被刪掉，啟動時找不到 `common.arc`（錯誤碼 3：找不到路徑）。另外有一個沒複製完的 0 B `.sngw`。
+- 修法：遊戲頁面新增「Install a mod」和「Remove mods」。MOD 用合併的方式裝進遊戲資料夾，會自動判斷放置位置、略過 Mac 的垃圾檔和 0 B 壞檔；被取代的原檔會備份，可以還原。先用「Check game files」和「Repair from Steam」補回缺的檔案，再用新功能安裝 MOD。
+- 結果：MOD 正常生效，語音變成日文。
+- 決策 0200，commit `24fb22aa`。
+
+**備註**：先前的「約 216 秒後當機」可能是早期 MOD 造成的，依使用者判斷不再追查。
 
 ---
 
@@ -177,12 +183,12 @@
 | 0197 | Steam 客戶端回應成就和統計請求 | `34c4d691` |
 | 0198 | 多聲道聲音混成立體聲 | `34c4d691` |
 | 0199 | 修正空間音效累加、計時器漂移和 Reset 規則 | `11209be8`、`2864b083`、`710bb88f` |
+| 0200 | 遊戲頁面可以用合併方式安裝 MOD，並能移除還原 | `24fb22aa` |
 
 ---
 
 ## 尚未處理
 
-- Resident Evil HD REMASTER：約 216 秒後當機。
 - FINAL FANTASY RESONANCE DEMO（4474710）：啟動 2 秒後結束（`exit=0x2329`），還沒調查。
 - GUILTY GEAR -STRIVE-：有 3 個雲端存檔衝突（SYSTEM.sav、SYSTEM2.sav、REPLAY.sav），下次按 Play 時要在介面裡選擇保留哪邊。
 - 上游 issue 草稿（`.work/reports/issue-new-findings.md`）還沒補上決策 0190 以後的發現。
