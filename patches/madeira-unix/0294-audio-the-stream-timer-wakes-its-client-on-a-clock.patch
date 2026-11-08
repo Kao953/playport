@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: HungYuKao
+ <jk@2001-b011-200a-b548-1959-a064-5756-bbb4.dynamic-ip6.hinet.net>
+Date: Sun, 8 Nov 2026 20:52:36 +0800
+Subject: [PATCH] audio: the stream timer wakes its client on a clock
+
+The timer that signals an event-driven client each device period slept
+usleep(10000) between wakes, about 11 ms on the phone: 900 to 920 wakes
+in ten seconds instead of 1000. Wine's spatial audio stream renders one
+period per wake, so DRAGON QUEST VII Reimagined Demo's 12-channel stream
+got 88 to 92 % of real time and its sound broke up from the opening
+movie on. The timer now waits until each period's deadline on the Mach
+clock; a wake more than four periods late starts the clock again.
+
+Class: fix
+Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 13 ++++++++++++-
+ 1 file changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 6d402e4..7d25d7a 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -1488,10 +1488,21 @@ static void ios_timer_loop(void *arg) {
+     /* A Wine system thread started at the stream's first start. Wake an
+      * event-driven client every device period so it refills the ring; exit
+      * when release_stream marks the stream dead (it then joins us). */
++    /* The wakes keep to a clock, not to sleeps: a client that renders one
++     * period per wake (Wine's spatial audio stream does) gets exactly the
++     * device rate. usleep(10000) slept about 11 ms on the phone, and such a
++     * client delivered 91 % of real time. A wake more than a few periods late
++     * (the thread was held, the app was in the background) starts the clock
++     * again rather than firing the missed ones in a row. */
+     struct ios_stream *s = arg;
++    uint64_t period = ios_ns_to_mach(IOS_RT_PERIOD_NS), next = mach_absolute_time();
+     LOG_FN_CALL(9, "timer_loop");
+     while (s->valid) {
+-        usleep(10000); /* device period, 10 ms */
++        uint64_t now;
++        next += period;
++        mach_wait_until(next);
++        now = mach_absolute_time();
++        if (now > next + 4 * period) next = now;
+         if (s->event && s->started) {
+             NtSetEvent(s->event, NULL);
+             atomic_fetch_add_explicit(&s->flow_events, 1, memory_order_relaxed);

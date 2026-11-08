@@ -21,6 +21,13 @@ before the objects are mixed into it.
 `patches/madeira-unix/0292` takes back the gain scaling 0291 added on the summing guess (decision
 0198); the clamp, NaN guard and channel peaks stay.
 
+- Silent buffers made the sound clean but broken up, from the opening movie on. `0293` logs a
+  `slot=N flow:` line beside each level line (event signals, GetBuffer answers and refusals,
+  Start/Stop, padding). It showed 900 to 920 timer wakes in ten seconds instead of 1000: the
+  timer slept `usleep(10000)` between wakes, about 11 ms on the phone, and the spatial stream
+  renders one period per wake. `0294` has the timer wait for each period's deadline on the Mach
+  clock, starting the clock again after a wake more than four periods late.
+
 ## Consequences
 
 A game rendering through spatial audio static objects is heard as it renders, whatever its driver

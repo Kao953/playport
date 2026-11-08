@@ -260,3 +260,4 @@
 0291-audio-a-mixed-down-stream-keeps-its-level-and-no-NaN.patch
 0292-audio-a-mixed-down-stream-keeps-its-speakers-full-ga.patch
 0293-audio-each-stream-logs-what-fed-it-in-its-level-wind.patch
+0294-audio-the-stream-timer-wakes-its-client-on-a-clock.patch
