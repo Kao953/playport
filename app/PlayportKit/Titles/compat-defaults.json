@@ -1,9 +1,5 @@
 {
   "titles": {
-    "app-4474710": {
-      "settings": {"runtime": "env.WINEDEBUG=err+all,warn+module,+loaddll"},
-      "reason": "FINAL FANTASY RESONANCE DEMO stops on its own \"failed to load SteamAPI\" dialog before Unreal starts, without opening the engine's steam_api64.dll: Wine's loader says which module it asked for and why that failed."
-    },
     "app-15100": {
       "controls": "keyboardMouse",
       "reason": "This game takes no controller on PC without a third-party fix (its Options list only keyboard layouts), so its on-screen controls start as a keyboard and mouse."

@@ -1,6 +1,6 @@
 # Playport 分支：遊戲修正紀錄
 
-分支 `steam-api-choice-in-release`，整理日期 2026-11-08。
+分支 `steam-api-choice-in-release`，整理日期 2026-11-09。
 每項列出症狀、原因、修法，以及對應的決策紀錄（`docs/decisions/`）、patch 和 commit。
 「狀態」是最後一次在手機上測試的結果。
 
@@ -17,6 +17,7 @@
 | Mega Man Legacy Collection 2 | 495050 | 可玩 | 0193、0194、0196 |
 | DRAGON QUEST VII Reimagined Demo | 2499870 | 可玩，聲音正常（2026-11-08 確認） | 0197、0198、0199 |
 | GUILTY GEAR Xrd REV 2 | 520440 | 放棄（模擬器層級當機） | 0185 |
+| FINAL FANTASY RESONANCE DEMO | 4474710 | 暫停（疑似 Denuvo 保護程式碼當機） | 0201、0202、0203 |
 | Shining Resonance Refrain | 809890 | 放棄 | 0191 |
 | Resident Evil（原版） | 4249100 | 放棄（加殼的 Steam 檢查） | 0195 |
 | ONE、Persona 3 Reload | — | 放棄 | — |
@@ -146,6 +147,32 @@
 
 ---
 
+## FINAL FANTASY RESONANCE DEMO（4474710，暫停）
+
+這是 Unreal Engine 5 遊戲：`FFRS.exe` 只是啟動器，真正的遊戲是 `FFRS\Binaries\Win64\FFRS-Win64-Shipping.exe`。
+
+**1. 按 Play 兩秒後結束（`exit=0x2329`），出現缺少 VC++ 2015-2022（arm64）的對話框**
+- 原因：UE 啟動器會檢查本機架構的 VC++ 執行階段登錄機碼。這個 Wine 回報的本機架構是 ARM64，但 prefix 只寫了 `Runtimes\x64`。
+- 修法：prefix 登錄種子同時寫入 `Runtimes\arm64`。
+- 決策 0201，commit `ea6205c6`。
+
+**2. VC++ 錯誤消失，但立刻結束（`0xC0000018`）**
+- 原因：主程式是 474 MiB、只能載入在固定位址 0x140000000 的執行檔。玩家按 Play 啟動的是可以載入在任何位址的 `FFRS.exe`，所以 app 沒有保留那個位址，啟動器自己佔了那裡；而且原本保留的空間也比 474 MiB 小。
+- 修法：啟動 UE 啟動器時會看它背後的主程式是否需要固定位址；保留空間擴大成 480 MiB（`[0x140000000, 0x15e000000)`）。
+- 決策 0202（修訂 0191），commit `650f5716`。
+
+**3. 主程式載入成功，但跳出「加載 SteamAPI 失敗」並結束（-1）**
+- 原因：遊戲在 Unreal 啟動前，從系統共用資料頁（`KUSER_SHARED_DATA.NtSystemRoot`）讀 Windows 資料夾來組 `wintrust.dll` 的路徑。這個欄位平常由 wineboot 填寫，但 app 從不執行 wineboot，所以是空的，遊戲去找 `\System32\wintrust.dll` 而失敗（`c0000135`）。
+- 修法：iOS 的 wineserver（`mapping_ios.c`）建立這個頁面時寫入 `C:\windows`（madeira-unix patch 0296）。所有遊戲都適用。
+- 排查過程：先替「Report a problem」加上收集 Unreal 遊戲自己的 log（commit `f669484b`），但這款在引擎啟動前就失敗，沒有 log；再暫時開啟 Wine 的 DLL 載入追蹤（commit `b4bb80a2`，已移除）才找到原因。第一次修正誤改了 iOS 沒有編譯的 `server/mapping.c`（commit `9c9678aa`，沒有作用），之後改到正確的檔案。
+- 決策 0203，commit `71224384`。手機測試確認：`wintrust.dll` 從 `C:\windows\System32\` 載入，SteamAPI 錯誤不再出現，遊戲成功載入 `steam_api64.dll` 並取得 Steam 帳號和加密 app ticket。
+
+**4. 目前卡住：啟動約 3 秒後當機（`0xC0000005`），暫停**
+- 當機位置在主程式內被混淆的程式碼，它讀取不存在的位址 `0x7196c27660`，同一時間也有多次改寫自身程式碼的行為。特徵很像防盜版保護（Denuvo 一類）的虛擬機程式碼；網路資料說正式版使用 Denuvo，demo 沒有明確來源。
+- 要繼續就得分析那個錯誤位址是怎麼算出來的，需要多輪追蹤，成功機會不高，所以先停在這裡。
+
+---
+
 ## 放棄的遊戲
 
 **GUILTY GEAR Xrd REV 2（520440）**
@@ -184,11 +211,14 @@
 | 0198 | 多聲道聲音混成立體聲 | `34c4d691` |
 | 0199 | 修正空間音效累加、計時器漂移和 Reset 規則 | `11209be8`、`2864b083`、`710bb88f` |
 | 0200 | 遊戲頁面可以用合併方式安裝 MOD，並能移除還原 | `24fb22aa` |
+| 0201 | prefix 也寫入 arm64 的 VC++ 執行階段機碼 | `ea6205c6` |
+| 0202 | UE 啟動器背後的固定位址主程式也能載入，保留空間擴大到 480 MiB | `650f5716` |
+| 0203 | 系統共用資料頁填入 Windows 資料夾（`C:\windows`） | `71224384` |
+| — | 「Report a problem」也收集 Unreal 遊戲自己的 log | `f669484b` |
 
 ---
 
 ## 尚未處理
 
-- FINAL FANTASY RESONANCE DEMO（4474710）：啟動 2 秒後結束（`exit=0x2329`），還沒調查。
 - GUILTY GEAR -STRIVE-：有 3 個雲端存檔衝突（SYSTEM.sav、SYSTEM2.sav、REPLAY.sav），下次按 Play 時要在介面裡選擇保留哪邊。
 - 上游 issue 草稿（`.work/reports/issue-new-findings.md`）還沒補上決策 0190 以後的發現。
