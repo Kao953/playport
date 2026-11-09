@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Mon, 9 Nov 2026 14:25:43 +0800
+Subject: [PATCH] wineserver: iOS: the user shared data's NtSystemRoot is
+ C:\windows
+
+Desktop Wine's wineboot fills KUSER_SHARED_DATA.NtSystemRoot at every
+start (update_user_shared_data); the app never runs wineboot, so it was
+empty. FINAL FANTASY RESONANCE DEMO builds the path of wintrust.dll from
+it before Unreal starts, asked for "\System32\wintrust.dll" (c0000135),
+and stopped on its own "failed to load SteamAPI" dialog. The iOS
+wineserver (mapping_ios.c) writes it beside the time zone bias when it
+creates the mapping.
+
+Class: ios-port
+Evidence: docs/decisions/0203-user-shared-data-names-the-windows-folder.md
+Offered-upstream: no
+---
+ build/wineserver/fd_ios.c      | 11 +++++++++++
+ build/wineserver/mapping_ios.c |  3 +++
+ 2 files changed, 14 insertions(+)
+
+diff --git a/build/wineserver/fd_ios.c b/build/wineserver/fd_ios.c
+index f5dc146..68efeee 100644
+--- a/build/wineserver/fd_ios.c
++++ b/build/wineserver/fd_ios.c
+@@ -401,6 +401,17 @@ void ios_usd_publish_timezone_bias(void)
+     atomic_store_long(&user_shared_data->TimeZoneBias.High1Time, ios_timezone_bias >> 32);
+ }
+ 
++/* The Windows folder, which desktop Wine's wineboot writes at every start
++ * (programs/wineboot update_user_shared_data); the app never runs wineboot.
++ * A game that builds a system DLL's path from it asked for
++ * "\System32\wintrust.dll" while it was empty (decision 0203). */
++void ios_usd_publish_system_root(void)
++{
++    static const WCHAR root[] = {'C',':','\\','w','i','n','d','o','w','s',0};
++    if (!user_shared_data) return;
++    memcpy( (void *)user_shared_data->NtSystemRoot, root, sizeof(root) );
++}
++
+ /* Report what the writable alias actually IS right now, and prove a store to it
+  * still lands. The wedge we are chasing is an address that accepts a write at
+  * startup and later stops completing one, so protection/tag at creation time
+diff --git a/build/wineserver/mapping_ios.c b/build/wineserver/mapping_ios.c
+index aecfe95..501749d 100644
+--- a/build/wineserver/mapping_ios.c
++++ b/build/wineserver/mapping_ios.c
+@@ -28,6 +28,7 @@
+ #ifdef WINE_IOS
+ extern void ws_log(const char *fmt, ...);
+ extern void ios_usd_publish_timezone_bias(void);
++extern void ios_usd_publish_system_root(void);
+ #endif
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -1570,6 +1571,7 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
+         ptr = mmap( NULL, mapping->size, PROT_WRITE, MAP_SHARED, get_unix_fd( mapping->fd ), 0 );
+         if (ptr != MAP_FAILED) user_shared_data = ptr;
+         ios_usd_publish_timezone_bias();
++        ios_usd_publish_system_root();
+         return &mapping->obj;
+     }
+ 
+@@ -1615,6 +1617,7 @@ struct object *create_user_data_mapping( struct object *root, struct unicode_str
+     if (ptr != MAP_FAILED) user_shared_data = ptr;
+ #ifdef WINE_IOS
+     ios_usd_publish_timezone_bias();
++    ios_usd_publish_system_root();
+ #endif
+     return &mapping->obj;
+ }
+-- 
+2.56.0
+

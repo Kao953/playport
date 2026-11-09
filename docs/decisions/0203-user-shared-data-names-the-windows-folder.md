@@ -19,7 +19,7 @@ runs wineboot, and nothing else wrote the field, so it was empty.
 ## Decision
 
 On iOS the wineserver writes `C:\windows` into NtSystemRoot when it creates the user shared data
-mapping (`patches/wine-unix/0209`). Every process maps that page.
+mapping (`patches/madeira-unix/0296`, in the iOS wineserver's `mapping_ios.c`). Every process maps that page.
 
 ## Consequences
 
