@@ -1650,6 +1650,8 @@ enum ProblemReport {
             .filter { $0.pathExtension.lowercased() == "log" }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
         urls += unityLogs(under: driveC.appendingPathComponent("users/playport/AppData/LocalLow", isDirectory: true))
+        urls += unrealLogs(under: [driveC.appendingPathComponent("users/playport/AppData/Local", isDirectory: true),
+                                   driveC.appendingPathComponent("users/playport/Documents/My Games", isDirectory: true)])
         return urls.filter { fm.fileExists(atPath: $0.path) }
     }
 
@@ -1671,12 +1673,51 @@ enum ProblemReport {
         return out.sorted { $0.path < $1.path }
     }
 
+    /// Unreal games' own logs, `<root>/<project>/Saved/Logs/*.log` (AppData/Local) or one
+    /// folder deeper (`My Games/<game>/Steam/Saved/Logs`), the newest three per game written
+    /// in the last three days: why the game stopped (a module it could not load, a fatal
+    /// error), which playport.log cannot say.
+    static func unrealLogs(under roots: [URL]) -> [URL] {
+        let fm = FileManager.default
+        let since = Date().addingTimeInterval(-3 * 24 * 3600)
+        func dirs(_ u: URL) -> [URL] {
+            ((try? fm.contentsOfDirectory(at: u, includingPropertiesForKeys: [.isDirectoryKey])) ?? [])
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true }
+        }
+        var out: [URL] = []
+        for root in roots {
+            for game in dirs(root) {
+                for base in [game] + dirs(game) {
+                    let logs = base.appendingPathComponent("Saved/Logs", isDirectory: true)
+                    let recent = ((try? fm.contentsOfDirectory(at: logs, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+                        .filter { $0.pathExtension.lowercased() == "log" }
+                        .compactMap { u -> (URL, Date)? in
+                            guard let t = (try? u.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                                  t >= since else { return nil }
+                            return (u, t)
+                        }
+                        .sorted { $0.1 > $1.1 }
+                    out += recent.prefix(3).map(\.0)
+                }
+            }
+        }
+        return out.sorted { $0.path < $1.path }
+    }
+
     /// A file's name in the report: a Unity log takes its company and product
-    /// (`unity-Qureate-BUNNY GARDEN-Player.log`), since every game's is Player.log.
+    /// (`unity-Qureate-BUNNY GARDEN-Player.log`), since every game's is Player.log; an
+    /// Unreal log takes its game folder (`unreal-FFRS-FFRS.log`).
     static func reportName(_ u: URL) -> String {
         let parts = u.pathComponents
-        guard parts.count >= 4, parts[parts.count - 4] == "LocalLow" else { return u.lastPathComponent }
-        return "unity-\(parts[parts.count - 3])-\(parts[parts.count - 2])-\(u.lastPathComponent)"
+        if parts.count >= 4, parts[parts.count - 4] == "LocalLow" {
+            return "unity-\(parts[parts.count - 3])-\(parts[parts.count - 2])-\(u.lastPathComponent)"
+        }
+        if parts.count >= 4, parts[parts.count - 2] == "Logs", parts[parts.count - 3] == "Saved" {
+            let parent = parts.count >= 5 ? parts[parts.count - 5] : ""
+            let game = ["Local", "My Games"].contains(parent) ? parts[parts.count - 4] : "\(parent)-\(parts[parts.count - 4])"
+            return "unreal-\(game)-\(u.lastPathComponent)"
+        }
+        return u.lastPathComponent
     }
 
     static func share(_ t: InstalledTitle) {
