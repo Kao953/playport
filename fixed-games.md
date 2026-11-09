@@ -17,6 +17,7 @@
 | Mega Man Legacy Collection 2 | 495050 | 可玩 | 0193、0194、0196 |
 | DRAGON QUEST VII Reimagined Demo | 2499870 | 可玩，聲音正常（2026-11-08 確認） | 0197、0198、0199 |
 | GUILTY GEAR Xrd REV 2 | 520440 | 放棄（模擬器層級當機） | 0185 |
+| アライさんマンション探索ゲーム～Incarnation～ | 4293310 | 可玩，音樂正常（2026-11-09 確認） | 0204、0205 |
 | FINAL FANTASY RESONANCE DEMO | 4474710 | 暫停（疑似 Denuvo 保護程式碼當機） | 0201、0202、0203 |
 | Shining Resonance Refrain | 809890 | 放棄 | 0191 |
 | Resident Evil（原版） | 4249100 | 放棄（加殼的 Steam 檢查） | 0195 |
@@ -147,6 +148,22 @@
 
 ---
 
+## アライさんマンション探索ゲーム～Incarnation～（4293310）
+
+這是 Godot 4 遊戲。
+
+**1. 按 Play 沒反應，遊戲完全沒啟動**
+- 原因：遊戲裝在日文名稱的資料夾。啟動前的路徑檢查只接受 ASCII 路徑，這條限制來自 Madeira 舊的啟動方式（`MADEIRA_INITIAL_CWD` 會把每個位元組當一個字元傳下去，日文會變亂碼）。Playport 現在都透過 session root 啟動，它會正確把 UTF-8 轉成寬字元，所以這條限制已經沒必要。
+- 修法：路徑接受任何合法的 UTF-8，只拒絕格式錯誤的位元組；MAX_PATH 改以 UTF-16 字元數計算。所有用非英文資料夾名稱的遊戲都適用。
+- 決策 0204，commit `7f93cc42`。
+
+**2. 音樂斷斷續續、殘缺**
+- 原因：每 10 秒只送出約 16% 該有的音訊。Godot 的 WASAPI 驅動用 IAudioClient3，把自己的緩衝區設成 Wine 回報的引擎週期（10 ms，480 frame），只在佇列空出來時才補資料。iOS 音訊輸出每次回呼要約 21 ms 的資料，每次都拿不到一半；驅動的不足補償（先等 20 ms 再播）又永遠等不到，播放和時鐘一起卡住。
+- 修法：`GetSharedModeEnginePeriod` 回報的週期下限改成 40 ms，Godot 會改用 1,920 frame 的緩衝區（wine-pe patch 0072）。不使用 IAudioClient3 的遊戲不受影響。
+- 決策 0205，commit `4bc809df`。2026-11-09 手機測試確認音樂正常。
+
+---
+
 ## FINAL FANTASY RESONANCE DEMO（4474710，暫停）
 
 這是 Unreal Engine 5 遊戲：`FFRS.exe` 只是啟動器，真正的遊戲是 `FFRS\Binaries\Win64\FFRS-Win64-Shipping.exe`。
@@ -214,6 +231,8 @@
 | 0201 | prefix 也寫入 arm64 的 VC++ 執行階段機碼 | `ea6205c6` |
 | 0202 | UE 啟動器背後的固定位址主程式也能載入，保留空間擴大到 480 MiB | `650f5716` |
 | 0203 | 系統共用資料頁填入 Windows 資料夾（`C:\windows`） | `71224384` |
+| 0204 | 遊戲路徑可以使用日文等非英文名稱 | `7f93cc42` |
+| 0205 | IAudioClient3 的音訊週期下限 40 ms（Godot 4 遊戲的聲音） | `4bc809df` |
 | — | 「Report a problem」也收集 Unreal 遊戲自己的 log | `f669484b` |
 
 ---
