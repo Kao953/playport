@@ -1078,9 +1078,10 @@ static void log_vm_layout(void)
  * read-only, at every slide seen), so the reservation reaches past the window
  * and keeps it when the rest goes back (selfcheck_exe_window_split). From the
  * lowest executable end seen (0x103ea8000) it passes the window; from the
- * highest (0x10a3f8000) it ends at 0x1643f8000, under the lowest main-thread
- * stack seen (0x16d0c4000). */
-#define HOST_POOL_RESERVE_BYTES (1440ull << 20)
+ * highest (0x10a3f8000) it ends at 0x1663f8000, under the lowest main-thread
+ * stack seen (0x16d0c4000). 1472 MiB since the window grew to 480 MiB
+ * (decision 0202). */
+#define HOST_POOL_RESERVE_BYTES (1472ull << 20)
 static char host_pool_reserve[HOST_POOL_RESERVE_BYTES] __attribute__((aligned(0x4000), used));
 
 /* The largest unmapped gap inside [lo, hi), and where it starts. */

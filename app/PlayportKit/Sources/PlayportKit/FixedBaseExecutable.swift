@@ -2,11 +2,11 @@
 import Foundation
 
 /// An x86-64 executable that must load at its ImageBase inside the executable window
-/// (0x140000000-0x15c000000, ARCHITECTURE.md): its relocations are stripped, or it is not
+/// (0x140000000-0x15e000000, ARCHITECTURE.md): its relocations are stripped, or it is not
 /// DYNAMIC_BASE. The runtime holds that window only above a JIT pool of up to
 /// `JitPool.windowKeepingMB`, so such a game's Play gets no larger pool (decision 0191).
 public enum FixedBaseExecutable {
-    public static let window: ClosedRange<UInt64> = 0x1_4000_0000...0x1_5BFF_FFFF
+    public static let window: ClosedRange<UInt64> = 0x1_4000_0000...0x1_5DFF_FFFF
 
     /// The ImageBase the executable needs, from its first bytes (4 KiB is enough); nil for an
     /// executable that relocates, is not x86-64, or needs no address in the window.
@@ -24,6 +24,19 @@ public enum FixedBaseExecutable {
         let dynamicBase = dll & 0x0040 != 0
         guard relocsStripped || !dynamicBase, window.contains(base) else { return nil }
         return base
+    }
+
+    /// What a Play starting `exe` needs: its own ImageBase, else, for an Unreal Engine
+    /// bootstrap (`<Project>.exe` beside `<Project>\Binaries\Win64\<Project>-Win64-Shipping.exe`),
+    /// the shipping executable's, which the bootstrap starts as a second process in the same
+    /// address space (FINAL FANTASY RESONANCE DEMO, decision 0202).
+    public static func imageBase(launching exe: URL) -> UInt64? {
+        if let base = imageBase(file: exe) { return base }
+        let project = exe.deletingPathExtension().lastPathComponent
+        guard exe.pathExtension.lowercased() == "exe",
+              let shipping = Adoption.locate("\(project)/Binaries/Win64/\(project)-Win64-Shipping.exe",
+                                            in: exe.deletingLastPathComponent()) else { return nil }
+        return imageBase(file: exe.deletingLastPathComponent().appendingPathComponent(shipping.replacingOccurrences(of: "\\", with: "/")))
     }
 
     /// The executable's ImageBase as `imageBase(header:)` reads it from the file.

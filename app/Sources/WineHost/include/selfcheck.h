@@ -29,10 +29,11 @@
 /* The executable window: where an x86-64 executable that is not DYNAMIC_BASE
  * must load, at the linker's default ImageBase. The host holds it from exec
  * and names it in WINE_IOS_EXE_WINDOW; ntdll hands it to such an executable
- * (patches/madeira-unix 0089). 448 MiB holds Jurassic World Evolution's
- * 0x1a5c5000-byte JWE.exe. */
+ * (patches/madeira-unix 0089). 480 MiB holds Jurassic World Evolution's
+ * 0x1a5c5000-byte JWE.exe and FINAL FANTASY RESONANCE DEMO's 0x1da1b000-byte
+ * FFRS-Win64-Shipping.exe (decision 0202). */
 #define SELFCHECK_EXE_WINDOW_LO 0x140000000ull
-#define SELFCHECK_EXE_WINDOW_HI 0x15c000000ull
+#define SELFCHECK_EXE_WINDOW_HI 0x15e000000ull
 /* ntdll finds the TEB's raw TSD slot by scanning this many (loader_ios.c). */
 #define SELFCHECK_TSD_SLOTS 512
 

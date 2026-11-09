@@ -12,7 +12,7 @@ GetBuffer calls answered and those refused as too large, Start and Stop
 calls, whether the stream and the endpoint run, and its padding. It is
 on in the release build, one line per stream every ten seconds.
 
-Class: diagnostic
+Class: diagnostics
 Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
 Offered-upstream: no
 ---

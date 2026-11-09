@@ -15,12 +15,12 @@
 import Foundation
 
 public enum JitPool {
-    /// What the executable's exec-time reservation is laid out for: its 1440 MiB
+    /// What the executable's exec-time reservation is laid out for: its 1472 MiB
     /// hold this plus 64 MiB of slack at its start at any slide (wine_host.c
     /// host_pool_reserve); a larger pool is placed first fit, which failed about one
     /// launch in four. A dev build's simulated pool may go up to it. Above a pool of
     /// up to 768 MiB the reservation also keeps the executable window
-    /// (0x140000000-0x15c000000) at every slide seen; 896 MiB keeps it only at the
+    /// (0x140000000-0x15e000000) at every slide seen; 896 MiB keeps it only at the
     /// lowest slides, and a launch that loses it logs `executable window: not held`.
     public static let maximumMB = 896
     /// The largest pool above which the reservation keeps the executable window at every slide

@@ -15,7 +15,7 @@ no more events, and the game rendered one period about every 100 ms on
 its own timeout: a tenth of the sound. Each flow line also counts the
 Reset calls.
 
-Class: fix
+Class: ios-port
 Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
 Offered-upstream: no
 ---

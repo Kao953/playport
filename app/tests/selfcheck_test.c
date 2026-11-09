@@ -94,12 +94,12 @@ int main(void)
     CHECK(selfcheck_judge(&f, small, 8) == SELFCHECK_OK);
     CHECK(small[7] == 0 && small[8] == 'x');
 
-    /* The executable window: the exec-time reservation (1440 MiB from the
+    /* The executable window: the exec-time reservation (1472 MiB from the
      * executable's end, 0x103ea8000 to 0x10a3f8000 seen) keeps it above a
      * 512 or 768 MiB pool and its 64 MiB slack at every slide; 896 MiB keeps
      * it at the lowest slide only. */
     {
-        const unsigned long long res = 1440 * MiB, slack = 64 * MiB;
+        const unsigned long long res = 1472 * MiB, slack = 64 * MiB;
         const unsigned long long slides[] = { 0x103ea8000ull, 0x10a3f8000ull };
         unsigned long long give[2][2];
         int held;

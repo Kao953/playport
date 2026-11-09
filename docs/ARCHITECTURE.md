@@ -284,7 +284,7 @@ places its start-up heap somewhere in that range before any app code runs; in
 about one launch in four no piece large enough was left.
 
 `wine_host.c` therefore reserves the pool's address space at exec time: a
-1440 MiB zero-fill array (`host_pool_reserve`) in the executable's
+1472 MiB zero-fill array (`host_pool_reserve`) in the executable's
 `__DATA,__bss`, which the kernel maps with the image, so nothing can be placed
 inside it first. Untouched, it costs no memory footprint. It holds a pool of up
 to 896 MiB plus 64 MiB of slack and starts where the executable ends, which the
@@ -293,7 +293,7 @@ slide moves (`0x103ea8000` to `0x10a3f8000` seen on the phone).
 debugserver allocates, and debugserver's first-fit allocation lands there.
 
 The rest of the reservation is given back afterwards, except the **executable
-window**, `[0x140000000, 0x15c000000)` (`selfcheck_exe_window_split`): an x86-64
+window**, `[0x140000000, 0x15e000000)` (`selfcheck_exe_window_split`): an x86-64
 executable that is not DYNAMIC_BASE must load at its ImageBase, the linker's
 default `0x140000000`, and one with its relocations stripped cannot load anywhere
 else (Jurassic World Evolution's 422 MiB `JWE.exe`). Without the hold that range
@@ -301,9 +301,9 @@ is taken before the runtime starts: libmalloc puts a 64 MiB `VM_RECLAIM` region
 and about 110 MiB of read-only regions just above the reservation's end, and the
 session root (`playport-session.exe`, linked at the default base) took
 `0x140000000` itself. The reservation reaches past the window from the lowest
-slide seen and ends at `0x1643f8000` from the highest, under the lowest main-thread
+slide seen and ends at `0x1663f8000` from the highest, under the lowest main-thread
 stack seen (`0x16d0c4000`). The host names the window in `WINE_IOS_EXE_WINDOW` and
-logs `executable window: 0x140000000-0x15c000000 held …`; above a pool whose range
+logs `executable window: 0x140000000-0x15e000000 held …`; above a pool whose range
 reaches it (896 MiB at a high slide) it logs `not held`. ntdll gives the window
 only to `map_image_view`'s attempt at such an executable's preferred base
 (`patches/madeira-unix` 0089; Madeira's `ios_exe_win_claim`, logged `ml977:

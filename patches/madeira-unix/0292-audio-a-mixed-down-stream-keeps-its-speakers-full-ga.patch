@@ -13,7 +13,7 @@ mixer. The scaling only made a surround stream quieter than Windows
 plays it; the per-sample clamp, the NaN guard and the channel peaks
 stay.
 
-Class: fix
+Class: ios-port
 Evidence: docs/decisions/0198-audio-mixes-down-multichannel-streams.md
 Offered-upstream: no
 ---

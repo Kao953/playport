@@ -34,6 +34,18 @@ final class FixedBaseExecutableTests: XCTestCase {
         XCTAssertNil(FixedBaseExecutable.imageBase(header: Data("not a PE".utf8)))
     }
 
+    func testAnUnrealBootstrapNeedsWhatItsShippingExecutableNeeds() throws {
+        // FINAL FANTASY RESONANCE DEMO: a relocatable FFRS.exe starts the fixed-base shipping exe (decision 0202).
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fixedbase-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let bin = dir.appendingPathComponent("FFRS/Binaries/Win64")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try header(characteristics: 0x22, base: 0x1_4000_0000, dll: 0x8160).write(to: dir.appendingPathComponent("FFRS.exe"))
+        XCTAssertNil(FixedBaseExecutable.imageBase(launching: dir.appendingPathComponent("FFRS.exe")))
+        try header(characteristics: 0x23, base: 0x1_4000_0000, dll: 0x8160).write(to: bin.appendingPathComponent("FFRS-Win64-Shipping.exe"))
+        XCTAssertEqual(FixedBaseExecutable.imageBase(launching: dir.appendingPathComponent("FFRS.exe")), 0x1_4000_0000)
+    }
+
     func testThePoolIsCappedOnlyForSuchAnExecutable() {
         let capped = JitPool.forFixedBase(gameMB: 896, imageBase: 0x1_4000_0000)
         XCTAssertEqual(capped.mb, JitPool.windowKeepingMB)

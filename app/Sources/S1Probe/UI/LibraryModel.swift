@@ -467,7 +467,7 @@ final class LibraryModel: ObservableObject {
         // An x86-64 executable that must load in the executable window keeps it: no pool over 768 MiB (decision 0191).
         let exeFile = WineHostRuntime.shared.prefixURL.appendingPathComponent("drive_c", isDirectory: true)
             .appendingPathComponent(Self.driveCRelative(plan.exe))
-        let fixedBase = JitPool.forFixedBase(gameMB: settings.jitPoolMB, imageBase: FixedBaseExecutable.imageBase(file: exeFile))
+        let fixedBase = JitPool.forFixedBase(gameMB: settings.jitPoolMB, imageBase: FixedBaseExecutable.imageBase(launching: exeFile))
         if let note = fixedBase.note { Self.log("play \(t.name): \(note)") }
         let fex = FEXProfile.launch(appID: t.appID, exe: plan.exe, ordering: settings.ordering, maxInst: settings.maxInst,
                                     x87Reduced: settings.x87Reduced, diskCache: settings.diskCache)

@@ -15,7 +15,7 @@ in the final mix, becomes silence instead of passing the clamp. Each
 stream of more than two channels logs its channels' peaks and NaNs with
 its level line.
 
-Class: fix
+Class: ios-port
 Evidence: docs/decisions/0198-audio-mixes-down-multichannel-streams.md
 Offered-upstream: no
 ---

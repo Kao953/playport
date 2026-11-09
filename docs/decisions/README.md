@@ -200,3 +200,4 @@ supersedes it.
 | [0199](0199-spatial-audio-starts-each-update-silent.md) | Wine's spatial audio stream clears its render buffer before mixing static objects into it (a 7.1.4 static bed piled each period onto the last into noise) |
 | [0200](0200-mods-merge-into-the-game-folder.md) | The game page installs mods by merging their folders or .zips into the game folder, backing up what they replace, and can remove them (a Finder folder replace deleted RE HD REMASTER data) |
 | [0201](0201-vc-runtime-key-for-arm64-too.md) | The prefix seed writes the Visual C++ runtime key for arm64 as well as x64 (an Unreal bootstrapper checked the native machine's key and exited 9001) |
+| [0202](0202-unreal-shipping-exe-keeps-a-larger-window.md) | An Unreal bootstrap's fixed-base shipping exe gets the executable window, which grows to 480 MiB (a 474 MiB FFRS-Win64-Shipping.exe could not load; amends 0191) |

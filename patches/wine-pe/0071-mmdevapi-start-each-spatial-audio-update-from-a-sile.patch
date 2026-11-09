@@ -13,7 +13,7 @@ Reimagined Demo (2499870) renders through a 7.1.4 static bed, and the
 phone played loud noise that grew to five times full scale within
 twenty seconds.
 
-Class: fix
+Class: upstream-bug
 Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
 Offered-upstream: no
 ---

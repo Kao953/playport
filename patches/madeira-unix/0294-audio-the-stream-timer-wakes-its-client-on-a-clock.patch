@@ -12,7 +12,7 @@ got 88 to 92 % of real time and its sound broke up from the opening
 movie on. The timer now waits until each period's deadline on the Mach
 clock; a wake more than four periods late starts the clock again.
 
-Class: fix
+Class: ios-port
 Evidence: docs/decisions/0199-spatial-audio-starts-each-update-silent.md
 Offered-upstream: no
 ---
