@@ -170,14 +170,17 @@ NEUTRALISE = {
 # and vcruntime140 are builtins, but Unreal Engine 5.3+'s packaged-game bootstrapper
 # reads this key's Major/Minor/Rbld to decide whether the runtime is installed, and
 # without it asks to install it and starts UEPrereqSetup_x64.exe, whose installer
-# window waits for a tap the phone does not show (House of Golf 2). Only the x64 key:
-# the guests are x86-64, and i386 games do not use this bootstrapper. Marked like
-# PROFILE.
+# window waits for a tap the phone does not show (House of Golf 2). The bootstrapper
+# picks the key by the native machine, which this ARM64 Wine reports as ARM64, so it
+# reads the arm64 key and, without it, names the arm64 redistributable and exits 9001
+# (FINAL FANTASY RESONANCE DEMO, decision 0201): the same values go under both. i386
+# games do not use this bootstrapper. Marked like PROFILE.
+_VC_VALUES = [
+    ("Bld", "dword", 0x8d97), ("Installed", "dword", 1), ("Major", "dword", 14),
+    ("Minor", "dword", 51), ("Rbld", "dword", 0), ("Version", "sz", "14.51.36247.00"),
+]
 VC_RUNTIME = {
-    "Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64": [
-        ("Bld", "dword", 0x8d97), ("Installed", "dword", 1), ("Major", "dword", 14),
-        ("Minor", "dword", 51), ("Rbld", "dword", 0), ("Version", "sz", "14.51.36247.00"),
-    ],
+    f"Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\{arch}": list(_VC_VALUES) for arch in ("x64", "arm64")
 }
 # The Steam install-script HasRunKeys Proton's wine.inf writes (Proton's [ProtonOverrides]
 # section, under Software\\Wow6432Node there; one view here, as the rest of this seed): the

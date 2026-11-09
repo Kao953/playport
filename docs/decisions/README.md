@@ -199,3 +199,4 @@ supersedes it.
 | [0198](0198-audio-mixes-down-multichannel-streams.md) | The iOS audio driver mixes a stream of more than two channels down to stereo by its channel mask (a 7.1.4 Unreal game was silent) |
 | [0199](0199-spatial-audio-starts-each-update-silent.md) | Wine's spatial audio stream clears its render buffer before mixing static objects into it (a 7.1.4 static bed piled each period onto the last into noise) |
 | [0200](0200-mods-merge-into-the-game-folder.md) | The game page installs mods by merging their folders or .zips into the game folder, backing up what they replace, and can remove them (a Finder folder replace deleted RE HD REMASTER data) |
+| [0201](0201-vc-runtime-key-for-arm64-too.md) | The prefix seed writes the Visual C++ runtime key for arm64 as well as x64 (an Unreal bootstrapper checked the native machine's key and exited 9001) |

@@ -24911,6 +24911,15 @@ WINE REGISTRY Version 2
 [Software\\Microsoft\\Transaction Server]
 
 ;; playport:top-up
+[Software\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\arm64]
+"Bld"=dword:00008d97
+"Installed"=dword:00000001
+"Major"=dword:0000000e
+"Minor"=dword:00000033
+"Rbld"=dword:00000000
+"Version"="14.51.36247.00"
+
+;; playport:top-up
 [SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\x64]
 "Bld"=dword:00008d97
 "Installed"=dword:00000001
