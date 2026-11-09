@@ -32,6 +32,30 @@ static int fail(char *msg, size_t msglen, int rc, const char *fmt, ...)
     return rc;
 }
 
+/* The length of UTF-8 s in UTF-16 units (a character past U+FFFF takes two),
+ * which is what Windows' MAX_PATH counts; -1 when s is not well-formed UTF-8. */
+static long utf16_length(const char *s)
+{
+    long n = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        unsigned c = *p, len, min;
+        if (c < 0x80) { n++; p++; continue; }
+        if ((c & 0xe0) == 0xc0) { len = 2; min = 0x80; c &= 0x1f; }
+        else if ((c & 0xf0) == 0xe0) { len = 3; min = 0x800; c &= 0x0f; }
+        else if ((c & 0xf8) == 0xf0) { len = 4; min = 0x10000; c &= 0x07; }
+        else return -1;
+        for (unsigned i = 1; i < len; i++) {
+            if ((p[i] & 0xc0) != 0x80) return -1;
+            c = (c << 6) | (p[i] & 0x3f);
+        }
+        if (c < min || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff)) return -1;
+        n += c >= 0x10000 ? 2 : 1;
+        p += len;
+    }
+    return n;
+}
+
 static int is_sep(char c)
 {
     return c == '\\' || c == '/';
@@ -81,11 +105,9 @@ int title_path_resolve(const char *prefix_dir, const char *path, title_path *out
     memset(out, 0, sizeof(*out));
 
     const char *s = path;
-    for (const char *q = s; *q; q++)
-        if ((unsigned char)*q >= 0x80)
-            /* the runtime's MADEIRA_INITIAL_CWD override widens one byte per
-             * character, so a UTF-8 directory name would reach the guest mangled */
-            return fail(msg, msglen, -1, "'%s': only ASCII names are supported", path);
+    /* UTF-8, which the session root turns into UTF-16 (MultiByteToWideChar with
+     * MB_ERR_INVALID_CHARS refuses anything else); a Japanese folder name is fine. */
+    if (utf16_length(s) < 0) return fail(msg, msglen, -1, "'%s': not valid UTF-8", path);
     if (((s[0] | 0x20) >= 'a' && (s[0] | 0x20) <= 'z') && s[1] == ':') {
         if ((s[0] | 0x20) != 'c')
             return fail(msg, msglen, -1, "'%s': drive %c: is not in the prefix; only C: maps to drive_c", path, s[0]);
@@ -139,7 +161,7 @@ int title_path_resolve(const char *prefix_dir, const char *path, title_path *out
 
     if (dir_end == 2) snprintf(out->dos_dir, sizeof(out->dos_dir), "C:\\");
     else snprintf(out->dos_dir, sizeof(out->dos_dir), "%.*s", (int)dir_end, out->dos);
-    if (dos_len >= DOS_MAX_PATH || strlen(out->dos_dir) + 1 >= DOS_MAX_PATH)
+    if (utf16_length(out->dos) >= DOS_MAX_PATH || utf16_length(out->dos_dir) + 1 >= DOS_MAX_PATH)
         return fail(msg, msglen, -4, "'%s': longer than MAX_PATH as a DOS path", path);
     snprintf(out->unix_path, sizeof(out->unix_path), "%s", cur);
     return fail(msg, msglen, 0, "%s (working directory %s)", out->dos, out->dos_dir);

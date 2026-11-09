@@ -81,6 +81,8 @@ int main(int argc, char **argv)
     touch(prefix, "drive_c/Games/Twin/A.EXE");
     touch(prefix, "drive_c/Games/Twin/Only.exe");
     touch(prefix, "drive_c/root.exe");
+    dir(prefix, "drive_c/Games/\xe3\x82\xa2\xe3\x83\xa9\xe3\x82\xa4\xe3\x81\x95\xe3\x82\x93");                                 /* a Japanese install folder */
+    touch(prefix, "drive_c/Games/\xe3\x82\xa2\xe3\x83\xa9\xe3\x82\xa4\xe3\x81\x95\xe3\x82\x93/arai.exe");
     char link[2048];
     snprintf(link, sizeof(link), "%s/drive_c/Games/dangling.exe", prefix);
     CHECK(symlink("nowhere.exe", link) == 0);
@@ -92,6 +94,7 @@ int main(int argc, char **argv)
     expect(prefix, "Games\\Hollow Knight\\hollow_knight.exe", 0, hk, hk_dir);
     expect(prefix, "\\Games\\Hollow Knight\\hollow_knight.exe", 0, hk, hk_dir);
     expect(prefix, "C:\\Games\\Hollow Knight\\hollow_knight.exe", 0, hk, hk_dir);
+    expect(prefix, "Games\\\xe3\x82\xa2\xe3\x83\xa9\xe3\x82\xa4\xe3\x81\x95\xe3\x82\x93\\arai.exe", 0, "C:\\Games\\\xe3\x82\xa2\xe3\x83\xa9\xe3\x82\xa4\xe3\x81\x95\xe3\x82\x93\\arai.exe", "C:\\Games\\\xe3\x82\xa2\xe3\x83\xa9\xe3\x82\xa4\xe3\x81\x95\xe3\x82\x93");
     expect(prefix, "c:/Games/Hollow Knight/hollow_knight.exe", 0, hk, hk_dir);
     /* case-insensitive as Wine is; the result carries the on-disk case */
     expect(prefix, "GAMES\\hollow knight\\HOLLOW_KNIGHT.EXE", 0, hk, hk_dir);
@@ -119,7 +122,9 @@ int main(int argc, char **argv)
     expect(prefix, "Games\\\\Hollow Knight\\hollow_knight.exe", -1, NULL, NULL);
     expect(prefix, "Games\\Hollow Knight.\\hollow_knight.exe", -1, NULL, NULL);
     expect(prefix, "Games\\Hollow Knight\\hollow?knight.exe", -1, NULL, NULL);
-    expect(prefix, "Games\\Caf\xc3\xa9\\x.exe", -1, NULL, NULL);
+    expect(prefix, "Games\\Caf\xc3\xa9\\x.exe", -2, NULL, NULL);                  /* UTF-8, just not there */
+    expect(prefix, "Games\\Caf\xe9\\x.exe", -1, NULL, NULL);                      /* Latin-1, not UTF-8 */
+    expect(prefix, "Games\\\xed\xa0\x80\\x.exe", -1, NULL, NULL);                /* an encoded surrogate */
     expect(prefix, "", -1, NULL, NULL);
     expect(prefix, "C:\\", -1, NULL, NULL);
 

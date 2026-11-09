@@ -202,3 +202,4 @@ supersedes it.
 | [0201](0201-vc-runtime-key-for-arm64-too.md) | The prefix seed writes the Visual C++ runtime key for arm64 as well as x64 (an Unreal bootstrapper checked the native machine's key and exited 9001) |
 | [0202](0202-unreal-shipping-exe-keeps-a-larger-window.md) | An Unreal bootstrap's fixed-base shipping exe gets the executable window, which grows to 480 MiB (a 474 MiB FFRS-Win64-Shipping.exe could not load; amends 0191) |
 | [0203](0203-user-shared-data-names-the-windows-folder.md) | On iOS the wineserver writes C:\windows into KUSER_SHARED_DATA.NtSystemRoot, which the never-run wineboot fills (FFRS asked for "\System32\wintrust.dll" and stopped on "failed to load SteamAPI") |
+| [0204](0204-a-title-path-may-be-any-utf-8.md) | A title's path may use any well-formed UTF-8 name, and MAX_PATH counts UTF-16 units (the ASCII-only rule came from Madeira's MADEIRA_INITIAL_CWD, which Playport does not use; a Japanese install folder was refused) |
