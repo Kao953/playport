@@ -257,5 +257,7 @@
 
 ## 尚未處理
 
+- 其他 RE Engine 的 DX11 遊戲（RE2／RE3 正式版、RE7、Village 等）很可能也用到雙精度指令，決策 0206 應該能直接套用；試玩成功後，替它們在 compat-defaults 加上預設 DXMT。
+- RE2「R.P.D. Demo」預設 DXMT 的設定（commit `b9d4dc96`）要等下一個 IPA 才生效；目前的 IPA `75ce5b00` 仍需手動選 DXMT。
 - GUILTY GEAR -STRIVE-：有 3 個雲端存檔衝突（SYSTEM.sav、SYSTEM2.sav、REPLAY.sav），下次按 Play 時要在介面裡選擇保留哪邊。
 - 上游 issue 草稿（`.work/reports/issue-new-findings.md`）還沒補上決策 0190 以後的發現。
