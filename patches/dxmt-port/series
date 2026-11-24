@@ -47,3 +47,4 @@
 0043-Licensing-the-converter-exception-is-adopted-2026-09.patch
 0044-winemetal-regenerate-the-dispatch-guards-and-census-.patch
 0045-winemetal-placement-heap-buffers-a-released-object-r.patch
+0046-airconv-double-precision-instructions-done-in-single.patch

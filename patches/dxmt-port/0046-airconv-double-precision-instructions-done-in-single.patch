@@ -1,0 +1,571 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Tue, 24 Nov 2026 09:55:56 +0800
+Subject: [PATCH] airconv: double-precision instructions, done in single
+ precision
+
+Apple GPUs have no fp64, so every sm5 double instruction (dadd, dmul, dmin,
+dmax, deq, dge, dlt, dne, dmov, dmovc, dtof, ftod) and the sm5.1 extended
+ones (ddiv, dfma, drcp, dtoi, dtou, itod, utod) hit the converter's
+"unhandled dxbc instruction" assert and the game ended with 0x80000101.
+The registers keep IEEE double bits in their .xy/.zw pairs; each operation
+decodes its doubles to the nearest float (denormals flush to zero, NaN and
+infinity kept), computes in single precision and encodes the result back.
+dmov and dmovc copy the bits exactly. 64-bit immediates are read as their
+four raw dwords.
+
+Class: feature
+Evidence: Resident Evil 2 "R.P.D. Demo" (app-1168280) on DXMT ended at its first compute shader with "Assertion failed: (0 && \"unhandled dxbc instruction\")" (report 20261124-094946); on Vulkan DXVK refused the same shader (createComputeShader E_INVALIDARG): KosmicKrisp has no shaderFloat64.
+Offered-upstream: no
+---
+ src/airconv/dxbc_instructions.cpp      | 191 ++++++++++++++++++
+ src/airconv/dxbc_instructions.hpp      |  21 ++
+ src/airconv/nt/dxbc_converter_base.cpp | 261 +++++++++++++++++++++++++
+ src/airconv/nt/dxbc_converter_base.hpp |   4 +
+ 4 files changed, 477 insertions(+)
+
+diff --git a/src/airconv/dxbc_instructions.cpp b/src/airconv/dxbc_instructions.cpp
+index f5af252..af7f0bc 100644
+--- a/src/airconv/dxbc_instructions.cpp
++++ b/src/airconv/dxbc_instructions.cpp
+@@ -204,6 +204,7 @@ SrcOperand readSrcOperand(
+ ) {
+   using namespace microsoft;
+   switch (O.m_Type) {
++  case D3D10_SB_OPERAND_TYPE_IMMEDIATE64: // two doubles, low dword first
+   case D3D10_SB_OPERAND_TYPE_IMMEDIATE32: {
+ 
+     DXASSERT_DXBC(O.m_Modifier == D3D10_SB_OPERAND_MODIFIER_NONE);
+@@ -2103,6 +2104,196 @@ Instruction readInstruction(
+       .read_swizzle = readSrcOperandSwizzle(Inst.m_Operands[1])
+     };
+   }
++  case microsoft::D3D11_SB_OPCODE_DADD: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Add,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DMUL: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Mul,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DMAX: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Max,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DMIN: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Min,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DEQ: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Eq,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DGE: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Ge,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DLT: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Lt,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DNE: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Ne,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DMOV: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Mov,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DMOVC: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::MovC,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[3], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_DTOF: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::ToFloat,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_SB_OPCODE_FTOD: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::FromFloat,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_DDIV: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Div,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_DFMA: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Fma,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[2], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[3], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_DRCP: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::Rcp,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_DTOI: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::ToSigned,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_DTOU: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::ToUnsigned,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_ITOD: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::FromSigned,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
++  case microsoft::D3D11_1_SB_OPCODE_UTOD: {
++    return InstDouble{
++      ._ = readInstructionCommon(Inst, shader_info),
++      .op = DoubleOp::FromUnsigned,
++      .dst = readDstOperand(Inst.m_Operands[0], phase, OperandDataType::Integer),
++      .src0 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src1 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++      .src2 = readSrcOperand(Inst.m_Operands[1], phase, OperandDataType::Integer),
++    };
++  }
+   default: {
+     llvm::outs() << "unhandled dxbc instruction " << Inst.OpCode() << "\n";
+     assert(0 && "unhandled dxbc instruction");
+diff --git a/src/airconv/dxbc_instructions.hpp b/src/airconv/dxbc_instructions.hpp
+index f55c4c1..f2ad255 100644
+--- a/src/airconv/dxbc_instructions.hpp
++++ b/src/airconv/dxbc_instructions.hpp
+@@ -681,6 +681,26 @@ struct InstConvert {
+   SrcOperand src;
+ };
+ 
++/* Double-precision instructions (sm5 doubles, sm5.1 extended doubles). Apple GPUs
++   have no fp64: the converter keeps the IEEE double bits in the register pairs
++   (.xy, .zw) and does the arithmetic in single precision. Sources and destinations
++   are read and written as raw 32-bit integers; the source modifiers are applied to
++   the decoded value. */
++enum class DoubleOp {
++  Add, Mul, Div, Min, Max, Fma, Rcp, Mov, MovC,
++  Eq, Ge, Lt, Ne,
++  ToFloat, FromFloat, ToSigned, ToUnsigned, FromSigned, FromUnsigned,
++};
++
++struct InstDouble {
++  InstructionCommon _;
++  DoubleOp op;
++  DstOperand dst;
++  SrcOperand src0;
++  SrcOperand src1;
++  SrcOperand src2;
++};
++
+ struct InstNop {};
+ 
+ struct InstPixelDiscard {};
+@@ -775,6 +795,7 @@ using InstructionList = PackedVariantList<
+   InstSamplePos, InstSampleInfo, InstBufferInfo, InstResourceInfo,       //
+   InstLoad, InstLoadUAVTyped, InstStoreUAVTyped,                         //
+   InstLoadRaw, InstLoadStructured, InstStoreRaw, InstStoreStructured,    //
++  InstDouble,                                                            //
+   InstNop,
+   /* Geometry Shader */
+   InstEmit, InstCut,
+diff --git a/src/airconv/nt/dxbc_converter_base.cpp b/src/airconv/nt/dxbc_converter_base.cpp
+index 58a101c..b7939da 100644
+--- a/src/airconv/nt/dxbc_converter_base.cpp
++++ b/src/airconv/nt/dxbc_converter_base.cpp
+@@ -2605,6 +2605,267 @@ Converter::operator()(const InstInterpolateOffset &eval) {
+   StoreOperand(eval.dst, MaskSwizzle(Value, GetMask(eval.dst), eval.read_swizzle));
+ }
+ 
++llvm::SmallVector<llvm::Value *, 4>
++Converter::LoadRawDwords(const SrcOperand &SrcOp, mask_t Mask, SrcOperandCommon &Modifiers) {
++  Modifiers = std::visit([](auto &Op) { return Op._; }, SrcOp);
++  SrcOperand Raw = SrcOp;
++  std::visit(
++      [](auto &Op) {
++        Op._.abs = false;
++        Op._.neg = false;
++        Op._.read_type = OperandDataType::Integer;
++      },
++      Raw
++  );
++  auto Value = LoadOperand(Raw, Mask);
++  llvm::SmallVector<llvm::Value *, 4> Dwords;
++  unsigned Count = __builtin_popcount(Mask & kMaskAll);
++  if (auto VecTy = llvm::dyn_cast<llvm::FixedVectorType>(Value->getType())) {
++    for (unsigned i = 0; i < Count && i < VecTy->getNumElements(); i++)
++      Dwords.push_back(ir.CreateExtractElement(Value, i));
++  } else {
++    Dwords.push_back(Value);
++  }
++  while (Dwords.size() < Count)
++    Dwords.push_back(Dwords.back());
++  return Dwords;
++}
++
++/* IEEE double bits to the nearest float: denormals become zero, out-of-range
++   exponents become infinity, NaN stays NaN. */
++llvm::Value *
++Converter::DoubleBitsToFloat(llvm::Value *Lo, llvm::Value *Hi) {
++  auto Zero32 = ir.getInt32(0);
++  auto Sign = ir.CreateAnd(Hi, 0x80000000u);
++  auto Exp = ir.CreateAnd(ir.CreateLShr(Hi, 20), 0x7ffu);
++  auto HiMant = ir.CreateAnd(Hi, 0xfffffu);
++  auto Mant = ir.CreateOr(ir.CreateShl(HiMant, 3), ir.CreateLShr(Lo, 29));
++  auto Round = ir.CreateAnd(ir.CreateLShr(Lo, 28), 1u);
++  auto FExp = ir.CreateSub(Exp, ir.getInt32(1023 - 127));
++  auto Normal = ir.CreateOr(Sign, ir.CreateAdd(ir.CreateShl(FExp, 23), ir.CreateAdd(Mant, Round)));
++  auto Inf = ir.CreateOr(Sign, 0x7f800000u);
++  auto NanPayload = ir.CreateSelect(
++      ir.CreateICmpNE(ir.CreateOr(HiMant, Lo), Zero32), ir.CreateOr(Mant, 0x400000u), Zero32
++  );
++  llvm::Value *Bits = ir.CreateSelect(
++      ir.CreateICmpSLE(FExp, Zero32), Sign,
++      ir.CreateSelect(ir.CreateICmpSGE(FExp, ir.getInt32(255)), Inf, Normal)
++  );
++  Bits = ir.CreateSelect(ir.CreateICmpEQ(Exp, ir.getInt32(0x7ff)), ir.CreateOr(Inf, NanPayload), Bits);
++  return ir.CreateBitCast(Bits, air.getFloatTy());
++}
++
++std::pair<llvm::Value *, llvm::Value *>
++Converter::FloatToDoubleBits(llvm::Value *Value) {
++  auto Zero32 = ir.getInt32(0);
++  auto Bits = ir.CreateBitCast(Value, air.getIntTy());
++  auto Sign = ir.CreateAnd(Bits, 0x80000000u);
++  auto Exp = ir.CreateAnd(ir.CreateLShr(Bits, 23), 0xffu);
++  auto Mant = ir.CreateAnd(Bits, 0x7fffffu);
++  auto MantHi = ir.CreateLShr(Mant, 3);
++  auto HiNormal = ir.CreateOr(Sign, ir.CreateOr(ir.CreateShl(ir.CreateAdd(Exp, ir.getInt32(1023 - 127)), 20), MantHi));
++  auto HiSpecial = ir.CreateOr(Sign, ir.CreateOr(ir.getInt32(0x7ff00000), MantHi));
++  auto IsZero = ir.CreateICmpEQ(Exp, Zero32);
++  auto IsSpecial = ir.CreateICmpEQ(Exp, ir.getInt32(0xff));
++  auto Hi = ir.CreateSelect(IsZero, Sign, ir.CreateSelect(IsSpecial, HiSpecial, HiNormal));
++  auto Lo = ir.CreateSelect(IsZero, Zero32, ir.CreateShl(Mant, 29));
++  return {Lo, Hi};
++}
++
++void
++Converter::operator()(const InstDouble &d) {
++  using namespace llvm::air;
++
++  mask_t DstMask = GetMask(d.dst) & kMaskAll;
++  unsigned DstCount = __builtin_popcount(DstMask);
++  bool DoubleDst = true;
++  switch (d.op) {
++  case DoubleOp::Eq:
++  case DoubleOp::Ge:
++  case DoubleOp::Lt:
++  case DoubleOp::Ne:
++  case DoubleOp::ToFloat:
++  case DoubleOp::ToSigned:
++  case DoubleOp::ToUnsigned:
++    DoubleDst = false;
++    break;
++  default:
++    break;
++  }
++  unsigned N = DoubleDst ? DstCount / 2 : std::min(DstCount, 2u);
++  if (N == 0)
++    return;
++
++  // A double source is read pairwise: at the destination's components for a double
++  // result, else its first N pairs. A 32-bit source gives its first N components.
++  mask_t DoubleSrcMask = DoubleDst ? DstMask : (N >= 2 ? 0b1111 : 0b0011);
++  mask_t ScalarSrcMask = (1u << N) - 1;
++
++  auto LoadDoubles = [&](const SrcOperand &Src) {
++    SrcOperandCommon Mod;
++    auto Dwords = LoadRawDwords(Src, DoubleSrcMask, Mod);
++    llvm::SmallVector<llvm::Value *, 2> Values;
++    for (unsigned i = 0; i < N; i++) {
++      llvm::Value *F = DoubleBitsToFloat(Dwords[2 * i], Dwords[2 * i + 1]);
++      if (Mod.abs)
++        F = air.CreateFPUnOp(AIRBuilder::fabs, F);
++      if (Mod.neg)
++        F = ir.CreateFNeg(F);
++      Values.push_back(F);
++    }
++    return Values;
++  };
++  // Bit-exact pairs for dmov/dmovc: the modifiers touch only the sign bit.
++  auto LoadPairs = [&](const SrcOperand &Src) {
++    SrcOperandCommon Mod;
++    auto Dwords = LoadRawDwords(Src, DoubleSrcMask, Mod);
++    for (unsigned i = 0; i < N; i++) {
++      if (Mod.abs)
++        Dwords[2 * i + 1] = ir.CreateAnd(Dwords[2 * i + 1], 0x7fffffffu);
++      if (Mod.neg)
++        Dwords[2 * i + 1] = ir.CreateXor(Dwords[2 * i + 1], 0x80000000u);
++    }
++    return Dwords;
++  };
++  auto LoadScalars = [&](const SrcOperand &Src, bool IntegerNeg) {
++    SrcOperandCommon Mod;
++    auto Dwords = LoadRawDwords(Src, ScalarSrcMask, Mod);
++    if (Mod.neg && IntegerNeg)
++      for (auto &D : Dwords)
++        D = ir.CreateNeg(D);
++    return Dwords;
++  };
++
++  llvm::SmallVector<llvm::Value *, 4> Out;
++  auto PushDouble = [&](llvm::Value *F) {
++    if (d._.saturate)
++      F = air.CreateFPUnOp(AIRBuilder::saturate, F);
++    auto [Lo, Hi] = FloatToDoubleBits(F);
++    Out.push_back(Lo);
++    Out.push_back(Hi);
++  };
++  auto PushBool = [&](llvm::Value *Cond) {
++    Out.push_back(ir.CreateSelect(Cond, ir.getInt32(~0u), ir.getInt32(0)));
++  };
++
++  switch (d.op) {
++  case DoubleOp::Mov: {
++    auto Src = LoadPairs(d.src0);
++    for (unsigned i = 0; i < 2 * N; i++)
++      Out.push_back(Src[i]);
++    break;
++  }
++  case DoubleOp::MovC: {
++    auto Cond = LoadScalars(d.src0, false);
++    auto A = LoadPairs(d.src1);
++    auto B = LoadPairs(d.src2);
++    for (unsigned i = 0; i < 2 * N; i++)
++      Out.push_back(ir.CreateSelect(ir.CreateICmpNE(Cond[i / 2], ir.getInt32(0)), A[i], B[i]));
++    break;
++  }
++  case DoubleOp::Add:
++  case DoubleOp::Mul:
++  case DoubleOp::Div:
++  case DoubleOp::Min:
++  case DoubleOp::Max: {
++    auto A = LoadDoubles(d.src0);
++    auto B = LoadDoubles(d.src1);
++    for (unsigned i = 0; i < N; i++) {
++      llvm::Value *R = nullptr;
++      switch (d.op) {
++      case DoubleOp::Add: R = ir.CreateFAdd(A[i], B[i]); break;
++      case DoubleOp::Mul: R = ir.CreateFMul(A[i], B[i]); break;
++      case DoubleOp::Div: R = ir.CreateFDiv(A[i], B[i]); break;
++      case DoubleOp::Min: R = air.CreateFPBinOp(AIRBuilder::fmin, A[i], B[i]); break;
++      default: R = air.CreateFPBinOp(AIRBuilder::fmax, A[i], B[i]); break;
++      }
++      PushDouble(R);
++    }
++    break;
++  }
++  case DoubleOp::Fma: {
++    auto A = LoadDoubles(d.src0);
++    auto B = LoadDoubles(d.src1);
++    auto C = LoadDoubles(d.src2);
++    for (unsigned i = 0; i < N; i++)
++      PushDouble(ir.CreateFAdd(ir.CreateFMul(A[i], B[i]), C[i]));
++    break;
++  }
++  case DoubleOp::Rcp: {
++    auto A = LoadDoubles(d.src0);
++    for (unsigned i = 0; i < N; i++)
++      PushDouble(ir.CreateFDiv(air.getFloat(1.0f), A[i]));
++    break;
++  }
++  case DoubleOp::Eq:
++  case DoubleOp::Ge:
++  case DoubleOp::Lt:
++  case DoubleOp::Ne: {
++    auto A = LoadDoubles(d.src0);
++    auto B = LoadDoubles(d.src1);
++    for (unsigned i = 0; i < N; i++) {
++      switch (d.op) {
++      case DoubleOp::Eq: PushBool(ir.CreateFCmpOEQ(A[i], B[i])); break;
++      case DoubleOp::Ge: PushBool(ir.CreateFCmpOGE(A[i], B[i])); break;
++      case DoubleOp::Lt: PushBool(ir.CreateFCmpOLT(A[i], B[i])); break;
++      default: PushBool(ir.CreateFCmpUNE(A[i], B[i])); break;
++      }
++    }
++    break;
++  }
++  case DoubleOp::ToFloat: {
++    auto A = LoadDoubles(d.src0);
++    for (unsigned i = 0; i < N; i++)
++      Out.push_back(ir.CreateBitCast(A[i], air.getIntTy()));
++    break;
++  }
++  case DoubleOp::ToSigned:
++  case DoubleOp::ToUnsigned: {
++    auto A = LoadDoubles(d.src0);
++    for (unsigned i = 0; i < N; i++)
++      Out.push_back(
++          d.op == DoubleOp::ToSigned ? air.CreateConvertToSigned(A[i]) : air.CreateConvertToUnsigned(A[i])
++      );
++    break;
++  }
++  case DoubleOp::FromFloat: {
++    auto A = LoadScalars(d.src0, false);
++    SrcOperandCommon Mod = std::visit([](auto &Op) { return Op._; }, d.src0);
++    for (unsigned i = 0; i < N; i++) {
++      llvm::Value *F = ir.CreateBitCast(A[i], air.getFloatTy());
++      if (Mod.abs)
++        F = air.CreateFPUnOp(AIRBuilder::fabs, F);
++      if (Mod.neg)
++        F = ir.CreateFNeg(F);
++      PushDouble(F);
++    }
++    break;
++  }
++  case DoubleOp::FromSigned:
++  case DoubleOp::FromUnsigned: {
++    auto A = LoadScalars(d.src0, true);
++    for (unsigned i = 0; i < N; i++)
++      PushDouble(
++          d.op == DoubleOp::FromSigned ? air.CreateConvertToFloat(A[i])
++                                       : air.CreateConvertToFloat(A[i], Signedness::Unsigned)
++      );
++    break;
++  }
++  }
++
++  while (Out.size() < DstCount)
++    Out.push_back(Out.back());
++  llvm::Value *Result;
++  if (DstCount == 1) {
++    Result = Out[0];
++  } else {
++    Result = llvm::PoisonValue::get(air.getIntTy(DstCount));
++    for (unsigned i = 0; i < DstCount; i++)
++      Result = ir.CreateInsertElement(Result, Out[i], i);
++  }
++  StoreOperand(d.dst, Result);
++}
++
+ void
+ Converter::operator()(const InstMaskedSumOfAbsDiff &msad) {
+   using namespace llvm;
+diff --git a/src/airconv/nt/dxbc_converter_base.hpp b/src/airconv/nt/dxbc_converter_base.hpp
+index c600d3d..ad2718c 100644
+--- a/src/airconv/nt/dxbc_converter_base.hpp
++++ b/src/airconv/nt/dxbc_converter_base.hpp
+@@ -314,6 +314,7 @@ public:
+   void operator()(const InstInterpolateOffset &);
+ 
+   void operator()(const InstMaskedSumOfAbsDiff &);
++  void operator()(const InstDouble &);
+   void operator()(const InstEmit &);
+   void operator()(const InstCut &);
+ 
+@@ -372,6 +373,9 @@ public:
+   }
+ 
+   llvm::Value *BitcastToFloat(llvm::Value *Value);
++  llvm::SmallVector<llvm::Value *, 4> LoadRawDwords(const SrcOperand &SrcOp, mask_t Mask, SrcOperandCommon &Modifiers);
++  llvm::Value *DoubleBitsToFloat(llvm::Value *Lo, llvm::Value *Hi);
++  std::pair<llvm::Value *, llvm::Value *> FloatToDoubleBits(llvm::Value *Value);
+   llvm::Value *BitcastToInt32(llvm::Value *Value);
+   llvm::Value *TruncAndBitcastToHalf(llvm::Value *Value);
+   llvm::Value *ZExtAndBitcastToInt32(llvm::Value *Value);
+-- 
+2.56.0
+
