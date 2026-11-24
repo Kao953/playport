@@ -4,6 +4,10 @@
       "controls": "keyboardMouse",
       "reason": "This game takes no controller on PC without a third-party fix (its Options list only keyboard layouts), so its on-screen controls start as a keyboard and mouse."
     },
+    "app-1168280": {
+      "settings": {"graphics": "dxmt"},
+      "reason": "Its compute shaders use double-precision instructions. DXMT runs them in single precision (decision 0206); DXVK refuses them on KosmicKrisp, which has no 64-bit floats, so the game stops at createComputeShader on Vulkan."
+    },
     "app-1174180": {
       "settings": {"graphics": "vulkan", "runtime": "vram-mb=2304 env.PLAYPORT_VK_HEAP_MB=2304"},
       "reason": "This game draws through Vulkan or Direct3D 12, which only the Vulkan layer runs, so it keeps Vulkan even when Settings chooses DXMT for every game. It is told 2,304 MB of video memory, not 3,072: it sizes its texture streaming from that figure, and Story's first load otherwise passes the app's memory limit."

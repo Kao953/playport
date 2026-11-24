@@ -1,6 +1,6 @@
 # Playport 分支：遊戲修正紀錄
 
-分支 `steam-api-choice-in-release`，整理日期 2026-11-09。
+分支 `steam-api-choice-in-release`，整理日期 2026-11-24。
 每項列出症狀、原因、修法，以及對應的決策紀錄（`docs/decisions/`）、patch 和 commit。
 「狀態」是最後一次在手機上測試的結果。
 
@@ -18,6 +18,8 @@
 | DRAGON QUEST VII Reimagined Demo | 2499870 | 可玩，聲音正常（2026-11-08 確認） | 0197、0198、0199 |
 | GUILTY GEAR Xrd REV 2 | 520440 | 放棄（模擬器層級當機） | 0185 |
 | アライさんマンション探索ゲーム～Incarnation～ | 4293310 | 可玩，音樂正常（2026-11-09 確認） | 0204、0205 |
+| Resident Evil 2 "R.P.D. Demo" | 1168280 | 可玩（DXMT，2026-11-24 確認） | 0206 |
+| Resident Evil Requiem Demo | 4459100 | 放棄（保護程式要用 iOS 系統佔用的位址） | — |
 | FINAL FANTASY RESONANCE DEMO | 4474710 | 暫停（疑似 Denuvo 保護程式碼當機） | 0201、0202、0203 |
 | Shining Resonance Refrain | 809890 | 放棄 | 0191 |
 | Resident Evil（原版） | 4249100 | 放棄（加殼的 Steam 檢查） | 0195 |
@@ -164,6 +166,18 @@
 
 ---
 
+## Resident Evil 2 "R.P.D. Demo"（1168280）
+
+這是 RE Engine 遊戲，繪圖走 DX11。
+
+**1. 畫出第一個畫面後跳出「錯誤」對話框（Vulkan），或直接閃退（DXMT，`0x80000101`）**
+- 原因：遊戲的 compute shader 用到雙精度浮點（double）指令，即使 DXMT 回報不支援 double 也照用。Apple GPU 沒有 fp64：Vulkan 這邊 KosmicKrisp 不支援 `shaderFloat64`，DXVK 拒絕建立 shader（`createComputeShader failed. HRESULT=0x80070057`）；DXMT 的 shader 轉換器完全沒有實作 double 指令，觸發 `unhandled dxbc instruction` 斷言。
+- 修法：DXMT 補上全部 19 個 double 指令。暫存器照樣保存雙精度位元，每次運算先轉成最接近的單精度計算再轉回去；`dmov`、`dmovc` 照位元複製（dxmt-port patch 0046）。精度從 53 位元降到 24 位元。這款遊戲預設改用 DXMT（compat-defaults）。
+- 決策 0206，commit `1f2ae490`。2026-11-24 手機測試確認可以順利遊玩。
+- 重建工具鏈時刪掉了整個建置區，這次是從頭建置的。
+
+---
+
 ## FINAL FANTASY RESONANCE DEMO（4474710，暫停）
 
 這是 Unreal Engine 5 遊戲：`FFRS.exe` 只是啟動器，真正的遊戲是 `FFRS\Binaries\Win64\FFRS-Win64-Shipping.exe`。
@@ -204,6 +218,9 @@
 - 顯示「Application load error 3:0000065432」並結束。執行檔用 Enigma Protector 加殼，Steam 檢查藏在殼裡，無法分析。
 - 為了排查，加了 Steam 客戶端第一次呼叫的紀錄（決策 0195，commit `23b4b519`），但沒能找出它要的東西。
 
+**Resident Evil Requiem Demo（4459100）**
+- 啟動 0.7 秒就閃退（`0xC0000005`）。保護程式把一個解密後的模組放進動態配置的記憶體，接著直接跳到固定位址 `0x18053dbd3`，也就是假設那個模組在 Windows DLL 的預設位址 `0x180000000`。在 iPhone 上，`0x180000000` 開始的那段是 iOS 的系統共用函式庫區（dyld shared cache），app 拿不到，所以無法修正。
+
 **ONE、Persona 3 Reload**
 - 已放棄，沒有對應的修正。
 
@@ -233,6 +250,7 @@
 | 0203 | 系統共用資料頁填入 Windows 資料夾（`C:\windows`） | `71224384` |
 | 0204 | 遊戲路徑可以使用日文等非英文名稱 | `7f93cc42` |
 | 0205 | IAudioClient3 的音訊週期下限 40 ms（Godot 4 遊戲的聲音） | `4bc809df` |
+| 0206 | DXMT 支援雙精度 shader 指令（以單精度計算） | `1f2ae490` |
 | — | 「Report a problem」也收集 Unreal 遊戲自己的 log | `f669484b` |
 
 ---
