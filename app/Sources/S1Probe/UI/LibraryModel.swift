@@ -356,6 +356,8 @@ final class LibraryModel: ObservableObject {
         var owned = true
         if let app = t.appID, settings.steamAPI == .emulated || settings.steamAPI == .client, let service {
             await ticketSweep?.value
+            // A Play pressed while the session logs on again waits for that logon (decision 0207).
+            await service.settleRestore()
             ticket = await service.encryptedAppTicket(appID: app)
             // A session iOS dropped in the background logs on again once (decision 0193).
             // Steam may answer the ticket request itself by closing the connection: then the

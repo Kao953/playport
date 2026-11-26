@@ -263,3 +263,4 @@
 0294-audio-the-stream-timer-wakes-its-client-on-a-clock.patch
 0295-audio-Reset-leaves-a-running-stream-running.patch
 0296-wineserver-iOS-the-user-shared-data-s-NtSystemRoot-i.patch
+0297-audio-PLAYPORT_AUDIO_DIAGNOSTICS-turns-the-stream-di.patch

@@ -12,6 +12,10 @@
       "settings": {"graphics": "vulkan", "runtime": "vram-mb=2304 env.PLAYPORT_VK_HEAP_MB=2304"},
       "reason": "This game draws through Vulkan or Direct3D 12, which only the Vulkan layer runs, so it keeps Vulkan even when Settings chooses DXMT for every game. It is told 2,304 MB of video memory, not 3,072: it sizes its texture streaming from that figure, and Story's first load otherwise passes the app's memory limit."
     },
+    "app-3013550": {
+      "settings": {"runtime": "env.MADEIRA_SCREEN_HZ=60 env.PLAYPORT_AUDIO_DIAGNOSTICS=1"},
+      "reason": "Its emulated games' sound wavers in pitch. It is told its monitor runs at 60 Hz, the rate its frames are limited to, rather than the panel's 120 Hz, and its audio streams report their delivery and underruns (decision 0207)."
+    },
     "app-292030": {
       "settings": {"runtime": "short-reserve-mb=6144"},
       "reason": "The current build reserves 64 GB and 32 GB of address space at start, more than an iPhone app has, so it gets the first 6 GB of each and is told it got all of it."

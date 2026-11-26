@@ -911,6 +911,39 @@ final class LibraryServiceTests: XCTestCase {
         XCTAssertFalse(suspended)
     }
 
+    func testAPlayDuringALogonWaitsForIt() async throws {
+        let b = FakeBackend()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await b.set(stored: FakeBackend.session(exp: 2_000_000_000))
+        let s = SteamService(backend: b, log: Logger { _ in }, stateDirectory: dir)
+        // Not restoring: returns at once.
+        let idle = await s.settleRestore()
+        XCTAssertFalse(idle)
+
+        // A restore under way (iOS dropped the socket and the app logs on again): the Play waits,
+        // then gets its ticket, with no second logon.
+        await b.set(restoreDelay: 200_000_000)
+        let restoring = Task { await s.restoreIfPossible() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let waited = await s.settleRestore()
+        XCTAssertTrue(waited)
+        _ = await restoring.value
+        let restores = await b.count("restore")
+        XCTAssertEqual(restores, 1)
+        let ticket = await s.encryptedAppTicket(appID: 367520)
+        XCTAssertNotNil(ticket)
+
+        // A logon slower than the limit: the Play goes on without it.
+        await b.disconnect()
+        await b.set(restoreDelay: 2_000_000_000)
+        let slow = Task { await s.restoreIfPossible() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let late = await s.settleRestore(timeout: 0.2)
+        XCTAssertFalse(late)
+        slow.cancel()
+    }
+
     func testEncryptedAppTicketOnTheSignedInSessionOnly() async throws {
         let b = FakeBackend()
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("svc-\(UUID().uuidString)")

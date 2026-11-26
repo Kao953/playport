@@ -1090,6 +1090,24 @@ public actor SteamService {
     /// it logged on anew: false when signed out, suspended, still connected, or
     /// when the logon failed or ran out of time (the session is then closed, so
     /// nothing outlives the limit into the launch).
+    /// Waits up to `timeout` seconds for a logon already under way (the
+    /// automatic restore after iOS dropped the connection) to finish, so a Play
+    /// pressed during it still gets its tickets (decision 0207). Returns at once
+    /// in any other state. True when it waited and the session is now signed in.
+    @discardableResult
+    public func settleRestore(timeout: Double = 5) async -> Bool {
+        guard !suspended, case .restoring = state else { return false }
+        let started = now()
+        while !suspended, case .restoring = state, now().timeIntervalSince(started) < timeout {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let signedIn: Bool
+        if case .signedIn = state { signedIn = true } else { signedIn = false }
+        log.info("ticket", "waited " + String(format: "%.2f", now().timeIntervalSince(started))
+                 + " s for the logon under way before the launch: " + (signedIn ? "signed in" : "not signed in"))
+        return signedIn
+    }
+
     public func reconnectForLaunch(timeout: Double = 5) async -> Bool {
         // A second Play while one logs on waits for it rather than logging on beside it.
         if let launchReconnect { return await launchReconnect.value }

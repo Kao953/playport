@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Thu, 26 Nov 2026 09:57:31 +0800
+Subject: [PATCH] audio: PLAYPORT_AUDIO_DIAGNOSTICS turns the stream
+ diagnostics on in a quiet runtime
+
+The release runtime sets MADEIRA_NO_DIAGNOSTICS, which hides each render
+stream's delivery, short callbacks, underrun frames and producer from the
+ten-second level line. A title's env.PLAYPORT_AUDIO_DIAGNOSTICS key turns
+them back on for that title alone, so a report from the release app can
+say whether a stream is starved.
+
+Class: diagnostics
+Evidence: Yu-Gi-Oh! EARLY DAYS COLLECTION (app-3013550) plays with a wavering pitch; its report (20261126-093924) shows the level lines without the underrun fields.
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 5a7d684..fd783a1 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -945,7 +945,9 @@ static int ios_stream_is_live(const struct ios_stream *s)
+ static int ios_audio_diagnostics(void)
+ {
+     static int state = -1;
+-    if (state < 0) state = getenv("MADEIRA_NO_DIAGNOSTICS") == NULL;
++    /* Playport (decision 0207): PLAYPORT_AUDIO_DIAGNOSTICS turns them on in a quiet runtime,
++     * for one title (a compat default's or the game page's env.* key) */
++    if (state < 0) state = getenv("MADEIRA_NO_DIAGNOSTICS") == NULL || getenv("PLAYPORT_AUDIO_DIAGNOSTICS") != NULL;
+     return state;
+ }
+ 
+-- 
+2.56.0
+
