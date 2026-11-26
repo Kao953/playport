@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Thu, 26 Nov 2026 13:56:10 +0800
+Subject: [PATCH] audio: the position the game reads moves with time between
+ render passes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+A render pass takes a whole hardware buffer at once (1024 frames, 21-23 ms),
+so play_pos, and with it GetPosition and GetCurrentPadding, moved in steps.
+An emulator that steers its speed by the padding followed the steps, which
+at 44.1 kHz (1114.6 stream frames every 23.2 ms) trembled audibly.
+
+The render callback now records each pass under a seqlock: the position
+before it, the frames it took, when it ran and how much output time it
+covers. GetPosition and GetCurrentPadding read play_pos before the pass plus
+the share of its frames that time has covered: an even position that never
+passes play_pos and equals it once the pass's time is over, during a refill
+hold, or when the record is stale. GetBuffer's ring check keeps the real
+play_pos. MADEIRA_AUDIO_SMOOTH=0 turns it off.
+
+Class: ios-port
+Evidence: Yu-Gi-Oh! EARLY DAYS COLLECTION (app-3013550) still trembled on Bluetooth A2DP at 44.1 kHz with the endpoint at the hardware rate, full delivery and no short callbacks (report 20261126-123309); アライさんマンション探索ゲーム on the same headphones played clean.
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 70 ++++++++++++++++++++++++++++---
+ 1 file changed, 65 insertions(+), 5 deletions(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index 56dcfb2..35e6ccf 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -325,6 +325,13 @@ struct ios_stream {
+      * stream's rate is not the endpoint's. The render callback alone touches it, and
+      * Reset (stopped) clears it. */
+     uint64_t res_phase;
++    /* Playport (decision 0211): the last render pass, for a position that moves with
++     * time between passes: play_pos was pos_base before it and pos_base + pos_adv
++     * after, the pass ran at pos_mach and covers pos_dur mach ticks of output.
++     * Written by the render callback under the pos_seq seqlock (odd = writing);
++     * pos_mach 0 = none yet. */
++    _Atomic uint32_t pos_seq;
++    _Atomic uint64_t pos_base, pos_adv, pos_mach, pos_dur;
+     int getbuf_logged;           /* the first GetBuffer caller is logged */
+     uint64_t last_release_mach;  /* the previous ReleaseBuffer with frames */
+     /* Playport (PLA-364): the stream's GetBuffer callers. A caller becomes the
+@@ -540,6 +547,7 @@ static uint64_t elapsed_frames(const struct ios_stream *s) {
+ #define IOS_REFILL_MS 20u
+ #define IOS_REFILL_MAX_CALLBACKS 3u
+ static int g_refill_on = 1;        /* read once at process attach */
++static int g_smooth_on = 1;        /* decision 0211, read once at process attach */
+ 
+ /* NaN or infinity, by its bits, so no floating-point mode can fold the test away */
+ static inline int ios_not_finite(float x)
+@@ -585,7 +593,7 @@ static inline void ios_frame_lr(const struct ios_stream *s, const BYTE *fr, floa
+ }
+ 
+ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+-                           UINT32 dev_ch, UINT32 dev_rate)
++                           UINT32 dev_ch, UINT32 dev_rate, uint64_t now, uint64_t dur)
+ {
+     UINT32 cap = s->buffer_frames, sch = s->channels, fb = s->frame_bytes;
+     uint64_t play, wr, avail, need, consume, step = 0, end = 0, adv;
+@@ -663,9 +671,50 @@ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+         if (adv > consume) adv = consume;
+         s->res_phase = pos & 0xffffffffull;
+     }
++    {   /* decision 0211: the pass, for ios_stream_position */
++        uint32_t seq = atomic_load_explicit(&s->pos_seq, memory_order_relaxed);
++        atomic_store_explicit(&s->pos_seq, seq + 1, memory_order_relaxed);
++        atomic_thread_fence(memory_order_release);
++        atomic_store_explicit(&s->pos_base, play, memory_order_relaxed);
++        atomic_store_explicit(&s->pos_adv, adv, memory_order_relaxed);
++        atomic_store_explicit(&s->pos_mach, now, memory_order_relaxed);
++        atomic_store_explicit(&s->pos_dur, dur, memory_order_relaxed);
++        atomic_store_explicit(&s->pos_seq, seq + 2, memory_order_release);
++    }
+     atomic_store_explicit(&s->play_pos, play + adv, memory_order_release);
+ }
+ 
++/* Playport (decision 0211): the stream's position as the game sees it. A render pass
++ * takes a whole hardware buffer at once (1024 frames, 21-23 ms), so play_pos moves in
++ * steps; an emulator that steers its speed by the padding hears every step. This is
++ * play_pos before the latest pass plus the share of that pass's frames its output time
++ * has covered: it moves evenly, never passes play_pos, and equals it once the pass's
++ * time is over, at a refill hold, and whenever the pass on record is not the latest. */
++static uint64_t ios_stream_position(struct ios_stream *s)
++{
++    uint64_t play = atomic_load_explicit(&s->play_pos, memory_order_acquire);
++    int tries;
++    if (!g_smooth_on) return play;
++    for (tries = 0; tries < 4; tries++) {
++        uint32_t seq = atomic_load_explicit(&s->pos_seq, memory_order_acquire), seq2;
++        uint64_t base, adv, at, dur, now, el;
++        if (seq & 1) continue;
++        base = atomic_load_explicit(&s->pos_base, memory_order_relaxed);
++        adv  = atomic_load_explicit(&s->pos_adv, memory_order_relaxed);
++        at   = atomic_load_explicit(&s->pos_mach, memory_order_relaxed);
++        dur  = atomic_load_explicit(&s->pos_dur, memory_order_relaxed);
++        atomic_thread_fence(memory_order_acquire);
++        seq2 = atomic_load_explicit(&s->pos_seq, memory_order_relaxed);
++        if (seq != seq2) continue;
++        if (!at || !dur || base + adv != play) return play;
++        now = mach_absolute_time();
++        el = now > at ? now - at : 0;
++        if (el >= dur) return play;
++        return base + adv * el / dur;
++    }
++    return play;
++}
++
+ /* Core Audio real-time thread. See ios_mix_stream for the constraints. */
+ static OSStatus ios_audio_render_cb(void *refcon, AudioUnitRenderActionFlags *flags,
+                                     const AudioTimeStamp *ts, UInt32 bus,
+@@ -678,8 +727,8 @@ static OSStatus ios_audio_render_cb(void *refcon, AudioUnitRenderActionFlags *fl
+     int i;
+     (void)refcon; (void)flags; (void)bus;
+ 
++    uint64_t now = mach_absolute_time(), dur;
+     {   /* decision 0208: atomics only, as everything here */
+-        uint64_t now = mach_absolute_time();
+         uint64_t last = atomic_exchange_explicit(&g_dev.cb_last_mach, now, memory_order_relaxed);
+         uint32_t lo = atomic_load_explicit(&g_dev.cb_min_frames, memory_order_relaxed);
+         if (last && now - last > atomic_load_explicit(&g_dev.cb_max_gap_mach, memory_order_relaxed))
+@@ -711,9 +760,12 @@ static OSStatus ios_audio_render_cb(void *refcon, AudioUnitRenderActionFlags *fl
+     }
+ 
+     memset(out, 0, total * sizeof(float));
++    /* the output time this pass covers, in mach ticks (decision 0211) */
++    if (!g_timebase.numer) dur = 0;
++    else dur = (uint64_t)nframes * 1000000000ull / dev_rate * g_timebase.denom / g_timebase.numer;
+     for (i = 0; i < IOS_MAX_STREAMS; i++) {
+         struct ios_stream *s = atomic_load_explicit(&g_mix[i], memory_order_acquire);
+-        if (s) ios_mix_stream(s, out, nframes, dev_ch, dev_rate);
++        if (s) ios_mix_stream(s, out, nframes, dev_ch, dev_rate, now, dur);
+     }
+     /* Summing independent clients can exceed full scale; clamp rather than
+      * letting it wrap into noise. */
+@@ -1437,6 +1489,11 @@ static NTSTATUS ios_process_attach(void *args) {
+         g_refill_on = !(e && !strcmp(e, "0"));
+         if (!g_refill_on) fprintf(stderr, "[ios_audio] underrun refill off (MADEIRA_AUDIO_REFILL=0)\n");
+     }
++    {   /* Playport (decision 0211) */
++        const char *e = getenv("MADEIRA_AUDIO_SMOOTH");
++        g_smooth_on = !(e && !strcmp(e, "0"));
++        if (!g_smooth_on) fprintf(stderr, "[ios_audio] position smoothing off (MADEIRA_AUDIO_SMOOTH=0)\n");
++    }
+     return STATUS_SUCCESS;
+ }
+ 
+@@ -1710,6 +1767,7 @@ static NTSTATUS ios_reset(void *args) {
+     atomic_store(&s->write_pos, 0);
+     atomic_store(&s->play_pos, 0);
+     s->res_phase = 0;
++    atomic_store(&s->pos_mach, 0);   /* decision 0211 */
+     s->pending_frames = 0;
+     p->result = S_OK;
+     return STATUS_SUCCESS;
+@@ -1998,7 +2056,9 @@ static NTSTATUS ios_get_current_padding(void *args) {
+     if (!s) { if (p->padding) *p->padding = 0; p->result = AUDCLNT_E_NOT_INITIALIZED; return STATUS_SUCCESS; }
+     if (p->padding) {
+         if (ios_stream_is_live(s)) {
+-            uint64_t pad = atomic_load(&s->write_pos) - atomic_load(&s->play_pos);
++            /* decision 0211: the position first; write_pos, read after it, is never behind it */
++            uint64_t pos = ios_stream_position(s);
++            uint64_t pad = atomic_load(&s->write_pos) - pos;
+             *p->padding = (UINT32)(pad > s->buffer_frames ? s->buffer_frames : pad);
+         } else {
+             *p->padding = 0; /* null-mode: always hungry */
+@@ -2035,7 +2095,7 @@ static NTSTATUS ios_get_position(void *args) {
+      * fallback: wall-clock synthesis as before. */
+     if (p->pos) {
+         if (ios_stream_is_live(s))
+-            *p->pos = atomic_load(&s->play_pos);
++            *p->pos = ios_stream_position(s);   /* decision 0211 */
+         else
+             *p->pos = elapsed_frames(s);
+     }
+-- 
+2.56.0
+

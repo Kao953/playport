@@ -266,3 +266,4 @@
 0297-audio-PLAYPORT_AUDIO_DIAGNOSTICS-turns-the-stream-di.patch
 0298-audio-the-diagnostics-window-also-reports-the-render.patch
 0299-audio-the-endpoint-runs-at-the-hardware-s-rate-and-t.patch
+0300-audio-the-position-the-game-reads-moves-with-time-be.patch
