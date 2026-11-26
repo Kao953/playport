@@ -53,7 +53,8 @@ enum TitleScreen {
         summary = "screen \(screen) (panel \(Int(px.width))x\(Int(px.height)) px), landscape, swap chain aspect-fitted, "
             + "presents free-running, display link asks for up to \(hz) Hz"
             + (frameLimit > 0 ? ", frames limited to \(frameLimit) FPS" : ", no frame rate limit")
-            + ", guest monitor \(ProcessInfo.processInfo.environment["MADEIRA_SCREEN_HZ"] ?? "60") Hz"
+            // getenv, not ProcessInfo: ProcessInfo's copy predates a title's env.MADEIRA_SCREEN_HZ key
+            + ", guest monitor \(getenv("MADEIRA_SCREEN_HZ").map { String(cString: $0) } ?? "60") Hz"
     }
 
     /// ProMotion keeps a CAMetalLayer at 60 Hz unless the app asks for more:
