@@ -201,6 +201,8 @@ final class HostIO {
         observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
             HostIO.log("hostio: audio route changed (reason \(reason)): " + HostIO.routeLine(AVAudioSession.sharedInstance()))
+            // The game's endpoint follows the new hardware rate, so iOS converts nothing (decision 0210).
+            HostIO.audioQueue.async { _ = ios_audio_route_changed() }
         })
         #if !PLAYPORT_RELEASE
         // On the posting thread, before any hop to the main queue: shows whether

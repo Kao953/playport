@@ -151,6 +151,11 @@ int host_entitlement(const char *name);
  * still has started. Returns how many units it touched. */
 int ios_audio_host_suspend(int suspend);
 
+/* libntdll_unix.a audio_null_ios.c + patches/madeira-unix/0299 (decision 0210): the audio
+ * route changed; the RemoteIO endpoint moves to the hardware's new rate. Returns the
+ * endpoint's rate, 0 before the game opened one. Any thread. */
+int ios_audio_route_changed(void);
+
 /* libdxmt_combined.a winemetal_unix.c + patches/dxmt/0002-winemetal-hold-Metal-commits-while-the-app-is-in-the.patch:
  * 0 from didEnterBackground closes the gate every Metal commit passes (iOS
  * refuses GPU work from the background; a refused buffer runs nothing), then

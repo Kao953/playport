@@ -265,3 +265,4 @@
 0296-wineserver-iOS-the-user-shared-data-s-NtSystemRoot-i.patch
 0297-audio-PLAYPORT_AUDIO_DIAGNOSTICS-turns-the-stream-di.patch
 0298-audio-the-diagnostics-window-also-reports-the-render.patch
+0299-audio-the-endpoint-runs-at-the-hardware-s-rate-and-t.patch

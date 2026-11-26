@@ -1,0 +1,271 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Thu, 26 Nov 2026 11:17:47 +0800
+Subject: [PATCH] audio: the endpoint runs at the hardware's rate and the mixer
+ converts
+
+The RemoteIO unit was opened at the first client's rate (48 kHz, the mix
+format every game gets), so on a 44.1 kHz route (headphones, Bluetooth
+A2DP) the unit converted. A game clean on the 48 kHz speaker stuttered
+on those routes, with every frame delivered.
+
+The endpoint now takes the unit's output (hardware) rate, and the mixer
+converts a stream at another rate: a 32.32 position per stream (kept
+across passes, cleared by Reset), each output frame interpolated between
+two input frames, consuming exactly rate/rate frames over time. The
+nearest-frame conversion it replaces always used up the rounded-up count.
+ios_audio_route_changed(), which the app calls on every route change,
+moves a running endpoint to a new hardware rate (stop, new input format,
+start).
+
+Class: ios-port
+Evidence: Yu-Gi-Oh! EARLY DAYS COLLECTION (app-3013550): wired headphones at 44.1 kHz stuttered and at 48 kHz played clean; Bluetooth A2DP stays at 44.1 kHz and still stuttered (reports 20261126-110426, 20261126-111424).
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 171 +++++++++++++++++++++++-------
+ 1 file changed, 132 insertions(+), 39 deletions(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index d6e02b1..4adf8cd 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -321,6 +321,10 @@ struct ios_stream {
+      * started: callbacks, those that found fewer frames than they needed,
+      * and the stream frames missing. Reported on the ml1065 line. */
+     _Atomic uint64_t mix_callbacks, short_callbacks, underrun_frames;
++    /* Playport (decision 0210): the resampler's position past play_pos, 32.32, when the
++     * stream's rate is not the endpoint's. The render callback alone touches it, and
++     * Reset (stopped) clears it. */
++    uint64_t res_phase;
+     int getbuf_logged;           /* the first GetBuffer caller is logged */
+     uint64_t last_release_mach;  /* the previous ReleaseBuffer with frames */
+     /* Playport (PLA-364): the stream's GetBuffer callers. A caller becomes the
+@@ -545,11 +549,46 @@ static inline int ios_not_finite(float x)
+     return (u & 0x7f800000u) == 0x7f800000u;
+ }
+ 
++/* One frame of a stream as stereo float: downmixed, converted from 16- or 32-bit
++ * integers, a NaN or infinity silenced in a downmix. Real-time safe. */
++static inline void ios_frame_lr(const struct ios_stream *s, const BYTE *fr, float *pl, float *pr)
++{
++    UINT32 sch = s->channels;
++    float l, r;
++    if (sch > 2) {
++        UINT32 c, n = sch < IOS_DOWNMIX_MAX ? sch : IOS_DOWNMIX_MAX;
++        l = r = 0;
++        for (c = 0; c < n; c++) {
++            float x;
++            if (s->is_float) x = ((const float *)fr)[c];
++            else if (s->sample_bits == 16) x = (float)((const int16_t *)fr)[c] * (1.0f / 32768.0f);
++            else x = (float)((const int32_t *)fr)[c] * (1.0f / 2147483648.0f);
++            if (ios_not_finite(x)) x = 0;       /* NaN or infinity carries no sound */
++            else if (x > 1.0f) x = 1.0f;
++            else if (x < -1.0f) x = -1.0f;
++            l += x * s->down_l[c];
++            r += x * s->down_r[c];
++        }
++    } else if (s->is_float) {
++        const float *v = (const float *)fr;
++        l = v[0]; r = sch > 1 ? v[1] : v[0];
++    } else if (s->sample_bits == 16) {
++        const int16_t *v = (const int16_t *)fr;
++        l = (float)v[0] * (1.0f / 32768.0f);
++        r = sch > 1 ? (float)v[1] * (1.0f / 32768.0f) : l;
++    } else {   /* 32-bit signed integer */
++        const int32_t *v = (const int32_t *)fr;
++        l = (float)v[0] * (1.0f / 2147483648.0f);
++        r = sch > 1 ? (float)v[1] * (1.0f / 2147483648.0f) : l;
++    }
++    *pl = l; *pr = r;
++}
++
+ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+                            UINT32 dev_ch, UINT32 dev_rate)
+ {
+     UINT32 cap = s->buffer_frames, sch = s->channels, fb = s->frame_bytes;
+-    uint64_t play, wr, avail, need;
++    uint64_t play, wr, avail, need, consume, step = 0, end = 0, adv;
+     uint32_t history, refill;
+     UInt32 f;
+ 
+@@ -559,9 +598,17 @@ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+     wr    = atomic_load_explicit(&s->write_pos, memory_order_acquire);
+     avail = wr - play;
+ 
+-    /* frames of THIS stream that cover nframes of device time */
+-    if (s->sample_rate == dev_rate) need = nframes;
+-    else need = ((uint64_t)nframes * s->sample_rate + dev_rate - 1) / dev_rate;
++    /* frames of THIS stream that cover nframes of device time. At another rate
++     * (decision 0210) the position runs from res_phase in 32.32 steps, each output
++     * frame interpolated between two input frames: `consume` frames are used up and
++     * `need` are read, the last one being the next pass's first. */
++    if (s->sample_rate == dev_rate) need = consume = nframes;
++    else {
++        step = ((uint64_t)s->sample_rate << 32) / dev_rate;
++        end = s->res_phase + (uint64_t)nframes * step;
++        consume = end >> 32;
++        need = ((s->res_phase + (uint64_t)(nframes ? nframes - 1 : 0) * step) >> 32) + 2;
++    }
+     atomic_fetch_add_explicit(&s->mix_callbacks, 1, memory_order_relaxed);
+     refill = atomic_load_explicit(&s->refill_callbacks, memory_order_relaxed);
+     if (refill) {
+@@ -592,47 +639,31 @@ static void ios_mix_stream(struct ios_stream *s, float *out, UInt32 nframes,
+ 
+     for (f = 0; f < nframes; f++)
+     {
+-        uint64_t sidx = (s->sample_rate == dev_rate)
+-                        ? (uint64_t)f
+-                        : ((uint64_t)f * s->sample_rate) / dev_rate;
+-        const BYTE *fr;
+         float l, r;
+-
+-        if (sidx >= need) break;
+-        fr = s->ring + (size_t)((play + sidx) % cap) * fb;
+-
+-        if (sch > 2) {
+-            UINT32 c, n = sch < IOS_DOWNMIX_MAX ? sch : IOS_DOWNMIX_MAX;
+-            l = r = 0;
+-            for (c = 0; c < n; c++) {
+-                float x;
+-                if (s->is_float) x = ((const float *)fr)[c];
+-                else if (s->sample_bits == 16) x = (float)((const int16_t *)fr)[c] * (1.0f / 32768.0f);
+-                else x = (float)((const int32_t *)fr)[c] * (1.0f / 2147483648.0f);
+-                if (ios_not_finite(x)) x = 0;       /* NaN or infinity carries no sound */
+-                else if (x > 1.0f) x = 1.0f;
+-                else if (x < -1.0f) x = -1.0f;
+-                l += x * s->down_l[c];
+-                r += x * s->down_r[c];
+-            }
+-        } else if (s->is_float) {
+-            const float *v = (const float *)fr;
+-            l = v[0]; r = sch > 1 ? v[1] : v[0];
+-        } else if (s->sample_bits == 16) {
+-            const int16_t *v = (const int16_t *)fr;
+-            l = (float)v[0] * (1.0f / 32768.0f);
+-            r = sch > 1 ? (float)v[1] * (1.0f / 32768.0f) : l;
+-        } else {   /* 32-bit signed integer */
+-            const int32_t *v = (const int32_t *)fr;
+-            l = (float)v[0] * (1.0f / 2147483648.0f);
+-            r = sch > 1 ? (float)v[1] * (1.0f / 2147483648.0f) : l;
++        if (!step) {
++            if (f >= need) break;
++            ios_frame_lr(s, s->ring + (size_t)((play + f) % cap) * fb, &l, &r);
++        } else {
++            uint64_t pos = s->res_phase + (uint64_t)f * step, i0 = pos >> 32;
++            float t = (float)(uint32_t)pos * (1.0f / 4294967296.0f), l1, r1;
++            if (i0 + 1 >= need) break;
++            ios_frame_lr(s, s->ring + (size_t)((play + i0) % cap) * fb, &l, &r);
++            ios_frame_lr(s, s->ring + (size_t)((play + i0 + 1) % cap) * fb, &l1, &r1);
++            l += (l1 - l) * t;
++            r += (r1 - r) * t;
+         }
+-
+         out[(size_t)f * dev_ch + 0] += l;
+         if (dev_ch > 1) out[(size_t)f * dev_ch + 1] += r;
+     }
+ 
+-    atomic_store_explicit(&s->play_pos, play + need, memory_order_release);
++    if (!step) adv = need;
++    else {
++        uint64_t pos = f == nframes ? end : s->res_phase + (uint64_t)f * step;
++        adv = pos >> 32;
++        if (adv > consume) adv = consume;
++        s->res_phase = pos & 0xffffffffull;
++    }
++    atomic_store_explicit(&s->play_pos, play + adv, memory_order_release);
+ }
+ 
+ /* Core Audio real-time thread. See ios_mix_stream for the constraints. */
+@@ -710,6 +741,18 @@ static int ios_fmt_is_float(const struct WAVEFORMATEX_stub *fmt) {
+ /* Create the ONE process-wide RemoteIO endpoint, at float32 stereo and the
+  * rate of whichever client opened it first. Returns 0 if the endpoint exists.
+  * Caller holds g_dev_lock. */
++/* The unit's output (hardware) rate, or 0 when it cannot be read. */
++static UINT32 ios_dev_hardware_rate(void)
++{
++    AudioStreamBasicDescription hw = {0};
++    UInt32 sz = sizeof(hw);
++    if (!g_dev.au) return 0;
++    if (AudioUnitGetProperty(g_dev.au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &hw, &sz) != noErr)
++        return 0;
++    if (hw.mSampleRate < 8000 || hw.mSampleRate > 384000) return 0;
++    return (UINT32)(hw.mSampleRate + 0.5);
++}
++
+ static int ios_dev_create_locked(const struct ios_stream *s)
+ {
+     AudioComponentDescription desc = {0};
+@@ -737,6 +780,14 @@ static int ios_dev_create_locked(const struct ios_stream *s)
+         g_dev.au = NULL; g_dev.failed = 1; return -1;
+     }
+ 
++    /* Playport (decision 0210): the endpoint runs at the hardware's rate, so the mixer,
++     * not the unit, converts a client's rate. iOS's own 48 -> 44.1 kHz conversion
++     * stuttered a game on headphones that was clean at 48 kHz. */
++    {
++        UINT32 hw = ios_dev_hardware_rate();
++        if (hw) g_dev.rate = hw;
++    }
++
+     /* The endpoint always runs float32 packed interleaved; per-client formats
+      * are converted by the mixer. */
+     asbd.mSampleRate = g_dev.rate;
+@@ -936,6 +987,47 @@ int ios_audio_host_suspend(int suspend)
+     return n;
+ }
+ 
++/* Playport (decision 0210): the app's audio route changed. When the hardware's rate
++ * is no longer the endpoint's, the unit is stopped, given the new rate on its input
++ * and started again, so it keeps converting nothing. Any app thread; never the
++ * render callback. Returns the endpoint's rate, 0 with no endpoint. */
++int ios_audio_route_changed(void)
++{
++    UINT32 hw, old;
++    int was;
++    OSStatus err = noErr;
++    AudioStreamBasicDescription asbd = {0};
++
++    pthread_mutex_lock(&g_dev_lock);
++    if (!g_dev.au) { pthread_mutex_unlock(&g_dev_lock); return 0; }
++    hw = ios_dev_hardware_rate();
++    old = g_dev.rate;
++    if (!hw || hw == old) { pthread_mutex_unlock(&g_dev_lock); return (int)old; }
++    was = g_dev.running;
++    if (was) { AudioOutputUnitStop(g_dev.au); g_dev.running = 0; }
++    AudioUnitUninitialize(g_dev.au);
++    asbd.mSampleRate = hw;
++    asbd.mFormatID = kAudioFormatLinearPCM;
++    asbd.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
++    asbd.mFramesPerPacket = 1;
++    asbd.mChannelsPerFrame = g_dev.channels;
++    asbd.mBitsPerChannel = 32;
++    asbd.mBytesPerFrame = 4 * g_dev.channels;
++    asbd.mBytesPerPacket = asbd.mBytesPerFrame;
++    err = AudioUnitSetProperty(g_dev.au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd, sizeof(asbd));
++    if (err == noErr) g_dev.rate = hw;
++    else {   /* keep the old rate: the unit converts, as before */
++        asbd.mSampleRate = old;
++        AudioUnitSetProperty(g_dev.au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &asbd, sizeof(asbd));
++    }
++    AudioUnitInitialize(g_dev.au);
++    if (was && !g_host_suspended && AudioOutputUnitStart(g_dev.au) == noErr) g_dev.running = 1;
++    pthread_mutex_unlock(&g_dev_lock);
++    fprintf(stderr, "[ios_audio] route changed: hardware %u Hz, endpoint %u -> %u Hz (err %d, running %d)\n",
++            hw, old, g_dev.rate, (int)err, g_dev.running);
++    return (int)g_dev.rate;
++}
++
+ static void ios_dev_start(void)
+ {
+     pthread_mutex_lock(&g_dev_lock);
+@@ -1608,6 +1700,7 @@ static NTSTATUS ios_reset(void *args) {
+     /* Drop queued-but-unplayed audio (only legal while stopped). */
+     atomic_store(&s->write_pos, 0);
+     atomic_store(&s->play_pos, 0);
++    s->res_phase = 0;
+     s->pending_frames = 0;
+     p->result = S_OK;
+     return STATUS_SUCCESS;
+-- 
+2.56.0
+
