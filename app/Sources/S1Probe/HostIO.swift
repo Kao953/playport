@@ -135,6 +135,14 @@ final class HostIO {
         host_log(AppLog.path, line)
     }
 
+    /// The session's output: each port's type and name, the hardware rate, the I/O buffer
+    /// duration and the output latency.
+    nonisolated static func routeLine(_ session: AVAudioSession) -> String {
+        let ports = session.currentRoute.outputs.map { "\($0.portType.rawValue) \"\($0.portName)\"" }.joined(separator: ", ")
+        return "\(Int(session.sampleRate)) Hz, I/O buffer \(String(format: "%.1f", session.ioBufferDuration * 1000)) ms, "
+            + "output latency \(Int(session.outputLatency * 1000)) ms, outputs: \(ports.isEmpty ? "none" : ports)"
+    }
+
     /// Before wine_host_init, off the main thread: an active audio session for
     /// the RemoteIO driver. start() has already set the guest's environment.
     nonisolated static func prepareRuntime(log: (String) -> Void) {
@@ -144,7 +152,7 @@ final class HostIO {
         do {
             try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
-            log("hostio: audio session active, \(Int(session.sampleRate)) Hz, output latency \(Int(session.outputLatency * 1000)) ms")
+            log("hostio: audio session active, " + routeLine(session))
         } catch {
             log("hostio: audio session: \(error)")
         }
@@ -183,6 +191,12 @@ final class HostIO {
             let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
             let began = raw.flatMap(AVAudioSession.InterruptionType.init(rawValue:)) == .began
             MainActor.assumeIsolated { HostIO.shared.handle(began ? .interruptionBegan : .interruptionEnded) }
+        })
+        // The output route, each time it changes (decision 0208): a game's sound can differ
+        // between the speaker and headphones.
+        observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+            HostIO.log("hostio: audio route changed (reason \(reason)): " + HostIO.routeLine(AVAudioSession.sharedInstance()))
         })
         #if !PLAYPORT_RELEASE
         // On the posting thread, before any hop to the main queue: shows whether

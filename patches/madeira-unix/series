@@ -264,3 +264,4 @@
 0295-audio-Reset-leaves-a-running-stream-running.patch
 0296-wineserver-iOS-the-user-shared-data-s-NtSystemRoot-i.patch
 0297-audio-PLAYPORT_AUDIO_DIAGNOSTICS-turns-the-stream-di.patch
+0298-audio-the-diagnostics-window-also-reports-the-render.patch

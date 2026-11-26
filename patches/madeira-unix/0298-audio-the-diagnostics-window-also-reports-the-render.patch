@@ -1,0 +1,90 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The Playport authors <dev@playport.dev>
+Date: Thu, 26 Nov 2026 10:38:01 +0800
+Subject: [PATCH] audio: the diagnostics window also reports the render
+ callbacks' shape
+
+With diagnostics on, each ten-second window adds a device line: the fewest
+and most frames a render callback asked for, the longest gap between two
+callbacks, the passes whose sample time did not follow on from the last
+one, and the unit's output (hardware) rate. A game whose sound is clean
+on the speaker and stutters on headphones can then show whether the
+route's callbacks differ.
+
+Class: diagnostics
+Evidence: Yu-Gi-Oh! EARLY DAYS COLLECTION (app-3013550): clean on the phone's speaker, stuttering on wired and Bluetooth headphones, with every stream window at 100 % delivery and no short callbacks (report 20261126-102522).
+Offered-upstream: no
+---
+ build/ntdll-unix/audio_null_ios.c | 42 ++++++++++++++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
+index fd783a1..d6e02b1 100644
+--- a/build/ntdll-unix/audio_null_ios.c
++++ b/build/ntdll-unix/audio_null_ios.c
+@@ -396,6 +396,12 @@ struct ios_audio_device {
+     UINT32 rate;                  /* canonical output rate */
+     UINT32 channels;              /* canonical output channel count */
+     _Atomic uint64_t cb_epoch;    /* ++ at the end of every render pass */
++    /* Playport (decision 0208): the render callbacks' shape in the current diagnostics
++     * window -- fewest and most frames asked, longest gap between two, and the passes
++     * whose sample time did not follow on from the previous one */
++    _Atomic uint32_t cb_min_frames, cb_max_frames;
++    _Atomic uint64_t cb_last_mach, cb_max_gap_mach, cb_time_jumps;
++    _Atomic uint64_t cb_next_sample;  /* bits of the double the next pass should start at */
+ };
+ static struct ios_audio_device g_dev;
+ static pthread_mutex_t g_dev_lock = PTHREAD_MUTEX_INITIALIZER;
+@@ -639,7 +645,27 @@ static OSStatus ios_audio_render_cb(void *refcon, AudioUnitRenderActionFlags *fl
+     size_t total = (size_t)nframes * dev_ch;
+     size_t k, cap_floats;
+     int i;
+-    (void)refcon; (void)flags; (void)ts; (void)bus;
++    (void)refcon; (void)flags; (void)bus;
++
++    {   /* decision 0208: atomics only, as everything here */
++        uint64_t now = mach_absolute_time();
++        uint64_t last = atomic_exchange_explicit(&g_dev.cb_last_mach, now, memory_order_relaxed);
++        uint32_t lo = atomic_load_explicit(&g_dev.cb_min_frames, memory_order_relaxed);
++        if (last && now - last > atomic_load_explicit(&g_dev.cb_max_gap_mach, memory_order_relaxed))
++            atomic_store_explicit(&g_dev.cb_max_gap_mach, now - last, memory_order_relaxed);
++        if (!lo || nframes < lo) atomic_store_explicit(&g_dev.cb_min_frames, nframes, memory_order_relaxed);
++        if (nframes > atomic_load_explicit(&g_dev.cb_max_frames, memory_order_relaxed))
++            atomic_store_explicit(&g_dev.cb_max_frames, nframes, memory_order_relaxed);
++        if (ts && (ts->mFlags & kAudioTimeStampSampleTimeValid)) {
++            double expect, next = ts->mSampleTime + nframes;
++            uint64_t bits = atomic_load_explicit(&g_dev.cb_next_sample, memory_order_relaxed), nb;
++            memcpy(&expect, &bits, sizeof(expect));
++            if (bits && (ts->mSampleTime - expect > 1.0 || expect - ts->mSampleTime > 1.0))
++                atomic_fetch_add_explicit(&g_dev.cb_time_jumps, 1, memory_order_relaxed);
++            memcpy(&nb, &next, sizeof(nb));
++            atomic_store_explicit(&g_dev.cb_next_sample, nb, memory_order_relaxed);
++        }
++    }
+ 
+     /* Never write past what Core Audio handed us: the format is packed
+      * interleaved, so there is exactly one buffer, but trust its size rather
+@@ -1749,6 +1775,20 @@ static NTSTATUS ios_release_render_buffer(void *args) {
+                                 (unsigned long long)pad, s->buffer_frames);
+                         memset(&chs[slot], 0, sizeof(chs[slot]));
+                     }
++                    if (ios_audio_diagnostics()) {
++                        /* decision 0208: the device side of the same window */
++                        double hw = 0;
++                        AudioStreamBasicDescription out = {0};
++                        UInt32 sz = sizeof(out);
++                        if (g_dev.au && AudioUnitGetProperty(g_dev.au, kAudioUnitProperty_StreamFormat,
++                                                             kAudioUnitScope_Output, 0, &out, &sz) == noErr)
++                            hw = out.mSampleRate;
++                        fprintf(stderr, "[ios_audio] device: render frames=%u..%u max_gap_ms=%.1f sample_time_jumps=%llu "
++                                "unit_output_rate=%.0f\n",
++                                atomic_exchange(&g_dev.cb_min_frames, 0), atomic_exchange(&g_dev.cb_max_frames, 0),
++                                mach_to_ns(atomic_exchange(&g_dev.cb_max_gap_mach, 0)) / 1e6,
++                                (unsigned long long)atomic_exchange(&g_dev.cb_time_jumps, 0), hw);
++                    }
+                     st[slot].frames = 0; st[slot].sum_abs = 0; st[slot].peak = 0; st[slot].clip = 0; st[slot].last = time(NULL);
+                     st[slot].written = 0; st[slot].start_mach = now_mach; st[slot].max_gap_mach = 0;
+                     st[slot].cbs = cbs; st[slot].shorts = shorts; st[slot].under = missing; st[slot].switches = switches;
+-- 
+2.56.0
+
