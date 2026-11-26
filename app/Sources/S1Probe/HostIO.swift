@@ -157,6 +157,8 @@ final class HostIO {
             do { try session.setPreferredSampleRate(48000) } catch { log("hostio: preferred sample rate: \(error)") }
             try session.setActive(true)
             log("hostio: audio session active, " + routeLine(session))
+            // The endpoint the game opens takes this rate (decision 0210).
+            _ = ios_audio_route_changed(Int32(session.sampleRate))
         } catch {
             log("hostio: audio session: \(error)")
         }
@@ -202,7 +204,8 @@ final class HostIO {
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
             HostIO.log("hostio: audio route changed (reason \(reason)): " + HostIO.routeLine(AVAudioSession.sharedInstance()))
             // The game's endpoint follows the new hardware rate, so iOS converts nothing (decision 0210).
-            HostIO.audioQueue.async { _ = ios_audio_route_changed() }
+            let rate = Int32(AVAudioSession.sharedInstance().sampleRate)
+            HostIO.audioQueue.async { _ = ios_audio_route_changed(rate) }
         })
         #if !PLAYPORT_RELEASE
         // On the posting thread, before any hop to the main queue: shows whether

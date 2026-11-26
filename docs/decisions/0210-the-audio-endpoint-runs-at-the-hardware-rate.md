@@ -16,8 +16,11 @@ nearest frame and always used up the rounded-up count.
 - **The mixer converts a stream at another rate.** Each stream keeps a 32.32 position past its
   play position across passes, which Reset clears. Each output frame is interpolated linearly
   between two input frames. Over time it uses up exactly the ratio of the two rates.
-- **A route change moves the endpoint.** The app calls `ios_audio_route_changed()` on every route
-  change, and a running endpoint moves to the new hardware rate (stop, new input format, start).
+- **The app tells the driver the hardware's rate.** It calls `ios_audio_route_changed(rate)` with
+  `AVAudioSession.sampleRate` when the session activates and on every route change. The unit's own
+  output format is not that rate before the unit is initialized, nor right after a route change:
+  a play begun on Bluetooth (44.1 kHz) opened its endpoint at 48 kHz. The endpoint opens at the
+  given rate, and a running one moves to a new rate (stop, new input format, start).
 - The session still asks for 48 kHz (0209), so a route that can do it converts nothing at all.
 
 ## Consequences

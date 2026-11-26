@@ -14,19 +14,20 @@ converts a stream at another rate: a 32.32 position per stream (kept
 across passes, cleared by Reset), each output frame interpolated between
 two input frames, consuming exactly rate/rate frames over time. The
 nearest-frame conversion it replaces always used up the rounded-up count.
-ios_audio_route_changed(), which the app calls on every route change,
-moves a running endpoint to a new hardware rate (stop, new input format,
-start).
+ios_audio_route_changed(rate), which the app calls with the session's rate when
+it activates and on every route change (the unit's own output format is
+not the hardware's rate before it is initialized), opens the endpoint at that rate
+and moves a running one to a new rate (stop, new input format, start).
 
 Class: ios-port
 Evidence: Yu-Gi-Oh! EARLY DAYS COLLECTION (app-3013550): wired headphones at 44.1 kHz stuttered and at 48 kHz played clean; Bluetooth A2DP stays at 44.1 kHz and still stuttered (reports 20261126-110426, 20261126-111424).
 Offered-upstream: no
 ---
- build/ntdll-unix/audio_null_ios.c | 171 +++++++++++++++++++++++-------
- 1 file changed, 132 insertions(+), 39 deletions(-)
+ build/ntdll-unix/audio_null_ios.c | 180 +++++++++++++++++++++++-------
+ 1 file changed, 141 insertions(+), 39 deletions(-)
 
 diff --git a/build/ntdll-unix/audio_null_ios.c b/build/ntdll-unix/audio_null_ios.c
-index d6e02b1..4adf8cd 100644
+index d6e02b1..56dcfb2 100644
 --- a/build/ntdll-unix/audio_null_ios.c
 +++ b/build/ntdll-unix/audio_null_ios.c
 @@ -321,6 +321,10 @@ struct ios_stream {
@@ -176,15 +177,22 @@ index d6e02b1..4adf8cd 100644
  }
  
  /* Core Audio real-time thread. See ios_mix_stream for the constraints. */
-@@ -710,6 +741,18 @@ static int ios_fmt_is_float(const struct WAVEFORMATEX_stub *fmt) {
+@@ -710,6 +741,25 @@ static int ios_fmt_is_float(const struct WAVEFORMATEX_stub *fmt) {
  /* Create the ONE process-wide RemoteIO endpoint, at float32 stereo and the
   * rate of whichever client opened it first. Returns 0 if the endpoint exists.
   * Caller holds g_dev_lock. */
-+/* The unit's output (hardware) rate, or 0 when it cannot be read. */
++/* The audio session's hardware rate as the app last reported it (ios_audio_route_changed),
++ * 0 before it did. The unit's own output format is not that rate until it is initialized,
++ * nor right after a route change. */
++static _Atomic UINT32 g_session_rate;
++
++/* The hardware's rate: the session's, else the unit's output format, else 0. */
 +static UINT32 ios_dev_hardware_rate(void)
 +{
 +    AudioStreamBasicDescription hw = {0};
 +    UInt32 sz = sizeof(hw);
++    UINT32 session = atomic_load(&g_session_rate);
++    if (session) return session;
 +    if (!g_dev.au) return 0;
 +    if (AudioUnitGetProperty(g_dev.au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &hw, &sz) != noErr)
 +        return 0;
@@ -195,7 +203,7 @@ index d6e02b1..4adf8cd 100644
  static int ios_dev_create_locked(const struct ios_stream *s)
  {
      AudioComponentDescription desc = {0};
-@@ -737,6 +780,14 @@ static int ios_dev_create_locked(const struct ios_stream *s)
+@@ -737,6 +787,14 @@ static int ios_dev_create_locked(const struct ios_stream *s)
          g_dev.au = NULL; g_dev.failed = 1; return -1;
      }
  
@@ -210,21 +218,23 @@ index d6e02b1..4adf8cd 100644
      /* The endpoint always runs float32 packed interleaved; per-client formats
       * are converted by the mixer. */
      asbd.mSampleRate = g_dev.rate;
-@@ -936,6 +987,47 @@ int ios_audio_host_suspend(int suspend)
+@@ -936,6 +994,49 @@ int ios_audio_host_suspend(int suspend)
      return n;
  }
  
-+/* Playport (decision 0210): the app's audio route changed. When the hardware's rate
++/* Playport (decision 0210): the app's audio session became active or its route changed,
++ * at `session_rate` (AVAudioSession.sampleRate). When the hardware's rate
 + * is no longer the endpoint's, the unit is stopped, given the new rate on its input
 + * and started again, so it keeps converting nothing. Any app thread; never the
 + * render callback. Returns the endpoint's rate, 0 with no endpoint. */
-+int ios_audio_route_changed(void)
++int ios_audio_route_changed(int session_rate)
 +{
 +    UINT32 hw, old;
 +    int was;
 +    OSStatus err = noErr;
 +    AudioStreamBasicDescription asbd = {0};
 +
++    if (session_rate >= 8000 && session_rate <= 384000) atomic_store(&g_session_rate, (UINT32)session_rate);
 +    pthread_mutex_lock(&g_dev_lock);
 +    if (!g_dev.au) { pthread_mutex_unlock(&g_dev_lock); return 0; }
 +    hw = ios_dev_hardware_rate();
@@ -258,7 +268,7 @@ index d6e02b1..4adf8cd 100644
  static void ios_dev_start(void)
  {
      pthread_mutex_lock(&g_dev_lock);
-@@ -1608,6 +1700,7 @@ static NTSTATUS ios_reset(void *args) {
+@@ -1608,6 +1709,7 @@ static NTSTATUS ios_reset(void *args) {
      /* Drop queued-but-unplayed audio (only legal while stopped). */
      atomic_store(&s->write_pos, 0);
      atomic_store(&s->play_pos, 0);
