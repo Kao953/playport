@@ -151,6 +151,10 @@ final class HostIO {
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .default, options: [])
+            // The mix format every game is given is 48 kHz (the audio driver's), and iOS would
+            // otherwise run headphones at 44.1 kHz and convert: a game clean on the speaker
+            // (48 kHz) stuttered on wired and Bluetooth headphones (decision 0209).
+            do { try session.setPreferredSampleRate(48000) } catch { log("hostio: preferred sample rate: \(error)") }
             try session.setActive(true)
             log("hostio: audio session active, " + routeLine(session))
         } catch {
