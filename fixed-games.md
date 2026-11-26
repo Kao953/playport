@@ -1,6 +1,6 @@
 # Playport 分支：遊戲修正紀錄
 
-分支 `steam-api-choice-in-release`，整理日期 2026-11-24。
+分支 `steam-api-choice-in-release`，整理日期 2026-11-26。
 每項列出症狀、原因、修法，以及對應的決策紀錄（`docs/decisions/`）、patch 和 commit。
 「狀態」是最後一次在手機上測試的結果。
 
@@ -19,6 +19,7 @@
 | GUILTY GEAR Xrd REV 2 | 520440 | 放棄（模擬器層級當機） | 0185 |
 | アライさんマンション探索ゲーム～Incarnation～ | 4293310 | 可玩，音樂正常（2026-11-09 確認） | 0204、0205 |
 | Resident Evil 2 "R.P.D. Demo" | 1168280 | 可玩（DXMT，2026-11-24 確認） | 0206 |
+| Yu-Gi-Oh! EARLY DAYS COLLECTION | 3013550 | 可玩，繁中正常，聲音正常（喇叭、有線、藍牙，2026-11-26 確認） | 0207–0211 |
 | Resident Evil Requiem Demo | 4459100 | 放棄（保護程式要用 iOS 系統佔用的位址） | — |
 | FINAL FANTASY RESONANCE DEMO | 4474710 | 暫停（疑似 Denuvo 保護程式碼當機） | 0201、0202、0203 |
 | Shining Resonance Refrain | 809890 | 放棄 | 0191 |
@@ -178,6 +179,24 @@
 
 ---
 
+## Yu-Gi-Oh! EARLY DAYS COLLECTION（3013550）
+
+**1. 把語言改成繁體中文後按 Play 就閃退**
+- 原因：換語言後 Playport 會重新登入 Steam。登入還沒完成就按下 Play，Steam 加密票證拿不到，遊戲就結束了。這跟語言本身無關。
+- 修法：按 Play 時如果 Steam 正在登入，最多等 5 秒讓它完成，再取票證。
+- 決策 0207，commit `5c93792d`。
+
+**2. 戴耳機時聲音顫抖、像卡帶走音（手機喇叭正常）**
+- 原因：耳機的硬體取樣率是 44.1 kHz，喇叭是 48 kHz。這款遊戲的模擬器會依照音訊緩衝的剩餘量微調播放速度；iOS 每次一大塊地取走聲音，在 44.1 kHz 下剩餘量每 23.2 ms 跳一大格，遊戲跟著忽快忽慢。アライさん在同一副藍牙耳機上正常，所以不是藍牙的問題。
+- 修法，分四步：
+  - log 記錄輸出裝置和每次取聲音的大小（決策 0208，commit `d7790921`）；
+  - 要求 iOS 用 48 kHz，有線耳機因此恢復正常（決策 0209，commit `4c293399`）；
+  - 藍牙固定 44.1 kHz，改由 Playport 用硬體的取樣率開啟音訊端點，並自己做取樣率轉換（決策 0210，commit `4680b753`、`e3fea5bd`）；
+  - 遊戲讀到的播放位置和剩餘量改成隨時間平順前進，不再每次取聲音才跳一大格，藍牙也恢復正常（決策 0211，commit `f46b9b37`）。
+- 這款遊戲的 compat-defaults 目前帶著除錯設定 `env.MADEIRA_SCREEN_HZ=60 env.PLAYPORT_AUDIO_DIAGNOSTICS=1`，問題確認解決後可以拿掉。
+
+---
+
 ## FINAL FANTASY RESONANCE DEMO（4474710，暫停）
 
 這是 Unreal Engine 5 遊戲：`FFRS.exe` 只是啟動器，真正的遊戲是 `FFRS\Binaries\Win64\FFRS-Win64-Shipping.exe`。
@@ -251,6 +270,11 @@
 | 0204 | 遊戲路徑可以使用日文等非英文名稱 | `7f93cc42` |
 | 0205 | IAudioClient3 的音訊週期下限 40 ms（Godot 4 遊戲的聲音） | `4bc809df` |
 | 0206 | DXMT 支援雙精度 shader 指令（以單精度計算） | `1f2ae490` |
+| 0207 | 按 Play 時等待進行中的 Steam 登入 | `5c93792d` |
+| 0208 | 音訊診斷記錄輸出裝置和取聲音的節奏 | `d7790921` |
+| 0209 | 音訊工作階段要求 48 kHz | `4c293399` |
+| 0210 | 音訊端點用硬體取樣率，由 Playport 自己轉換，跟著輸出裝置切換 | `4680b753`、`e3fea5bd` |
+| 0211 | 遊戲讀到的音訊位置隨時間平順前進 | `f46b9b37` |
 | — | 「Report a problem」也收集 Unreal 遊戲自己的 log | `f669484b` |
 
 ---
@@ -258,6 +282,7 @@
 ## 尚未處理
 
 - 其他 RE Engine 的 DX11 遊戲（RE2／RE3 正式版、RE7、Village 等）很可能也用到雙精度指令，決策 0206 應該能直接套用；試玩成功後，替它們在 compat-defaults 加上預設 DXMT。
-- RE2「R.P.D. Demo」預設 DXMT 的設定（commit `b9d4dc96`）要等下一個 IPA 才生效；目前的 IPA `75ce5b00` 仍需手動選 DXMT。
+- RE2「R.P.D. Demo」預設 DXMT 的設定（commit `b9d4dc96`）已包含在 IPA `ea104474` 裡，還沒有用這個 IPA 實際確認。
+- 遊戲王經典集 compat-defaults 裡的除錯設定（見上方）可以拿掉，拿掉後要重新打包。
 - GUILTY GEAR -STRIVE-：有 3 個雲端存檔衝突（SYSTEM.sav、SYSTEM2.sav、REPLAY.sav），下次按 Play 時要在介面裡選擇保留哪邊。
 - 上游 issue 草稿（`.work/reports/issue-new-findings.md`）還沒補上決策 0190 以後的發現。
